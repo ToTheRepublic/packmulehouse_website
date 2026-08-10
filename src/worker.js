@@ -1125,19 +1125,63 @@ async function serveAsset(request, env, rewritePath) {
     return error("Not found", 404);
   }
 
-  let assetRequest = request;
+  const base = new URL(request.url);
+  const tryPaths = [];
   if (rewritePath) {
-    const u = new URL(request.url);
-    u.pathname = rewritePath;
-    assetRequest = new Request(u.toString(), request);
+    tryPaths.push(rewritePath);
+    // Assets may clean-URL redirect foo.html → /foo; also try bare path
+    if (rewritePath.endsWith(".html")) {
+      tryPaths.push(rewritePath.replace(/\.html$/, ""));
+    }
+  } else {
+    tryPaths.push(base.pathname);
+    if (base.pathname === "/" || base.pathname === "") {
+      tryPaths.push("/index.html");
+    } else if (!base.pathname.includes(".")) {
+      tryPaths.push(`${base.pathname.replace(/\/$/, "")}.html`);
+    }
   }
 
-  const res = await env.ASSETS.fetch(assetRequest);
-  const url = new URL(assetRequest.url);
+  let res = null;
+  let usedPath = base.pathname;
+  for (const p of tryPaths) {
+    const u = new URL(request.url);
+    u.pathname = p.startsWith("/") ? p : `/${p}`;
+    usedPath = u.pathname;
+    const assetRequest = new Request(u.toString(), request);
+    res = await env.ASSETS.fetch(assetRequest);
+    if (res.status === 200) break;
+    // Follow a single assets redirect to another path
+    if (res.status >= 300 && res.status < 400) {
+      const loc = res.headers.get("Location");
+      if (loc) {
+        const next = new URL(loc, u);
+        const candidates = [next.pathname];
+        if (!next.pathname.endsWith(".html") && !next.pathname.includes(".")) {
+          candidates.push(`${next.pathname.replace(/\/$/, "")}.html`);
+        }
+        for (const c of candidates) {
+          const u2 = new URL(request.url);
+          u2.pathname = c;
+          const r2 = await env.ASSETS.fetch(new Request(u2.toString(), request));
+          if (r2.status === 200) {
+            res = r2;
+            usedPath = c;
+            break;
+          }
+        }
+        if (res.status === 200) break;
+      }
+    }
+  }
 
-  if (isHtmlOrScript(url.pathname) && res.status === 200) {
+  if (res && isHtmlOrScript(usedPath) && res.status === 200) {
     const headers = new Headers(res.headers);
     headers.set("Cache-Control", "no-cache, must-revalidate");
+    // Ensure HTML content-type even if assets omits it
+    if (usedPath.endsWith(".html") || usedPath === "/" || usedPath === "/admin") {
+      headers.set("Content-Type", "text/html; charset=utf-8");
+    }
     return new Response(res.body, {
       status: res.status,
       statusText: res.statusText,
@@ -1145,7 +1189,7 @@ async function serveAsset(request, env, rewritePath) {
     });
   }
 
-  return res;
+  return res || error("Not found", 404);
 }
 
 async function handleNotifyTest(env) {
@@ -1202,18 +1246,19 @@ export default {
       }
 
       // Admin host: serve admin app for all non-API paths
+      // Asset filename avoids Workers Assets "clean URL" redirects on /admin
       if (adminHost) {
-        return serveAsset(request, env, "/admin.html");
+        return serveAsset(request, env, "/pmh-console.html");
       }
 
       // Path-based admin (works on workers.dev today)
-      // Use /admin.html asset — directory /admin/ causes asset redirect loops
       if (
         url.pathname === "/admin" ||
         url.pathname === "/admin/" ||
-        url.pathname === "/admin.html"
+        url.pathname === "/admin.html" ||
+        url.pathname === "/pmh-console.html"
       ) {
-        return serveAsset(request, env, "/admin.html");
+        return serveAsset(request, env, "/pmh-console.html");
       }
 
       return serveAsset(request, env);
