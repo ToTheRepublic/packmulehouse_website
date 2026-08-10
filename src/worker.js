@@ -399,25 +399,25 @@ async function notifyMerchant(env, payload) {
     errors.push(`ntfy: ${e.message}`);
   }
 
-  // --- 2) Discord webhook ---
+  // --- 2) Discord webhook (rich embed with order fields) ---
   if (env.DISCORD_WEBHOOK_URL) {
     try {
+      const embed = payload.discordEmbed || {
+        title: subject.slice(0, 250),
+        description: text.slice(0, 4000),
+        color: 0xc4a574,
+      };
       const res = await fetch(env.DISCORD_WEBHOOK_URL, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          content: null,
-          embeds: [
-            {
-              title: subject.slice(0, 250),
-              description: text.slice(0, 4000),
-              color: 0xc4a574,
-            },
-          ],
+          content: payload.discordContent || "**🛒 New Pack Mule House order**",
+          embeds: [embed],
         }),
       });
       if (!res.ok) {
-        throw new Error(`Discord ${res.status}`);
+        const body = await res.text();
+        throw new Error(`Discord ${res.status}: ${body.slice(0, 120)}`);
       }
       results.push({ channel: "discord", ok: true });
     } catch (e) {
@@ -541,26 +541,35 @@ function escapeHtml(s) {
     .replace(/"/g, "&quot;");
 }
 
-function buildOrderEmail({ lines, shipping, total, currency, shippingInfo, orderId, paymentId, environment }) {
+function buildOrderEmail({
+  lines,
+  shipping,
+  subtotal,
+  total,
+  currency,
+  shippingInfo,
+  orderId,
+  paymentId,
+  environment,
+}) {
+  const cur = currency || "USD";
   const itemLines = lines
     .map(
       (l) =>
-        `  • ${l.itemName} × ${l.quantity} — ${formatMoney(l.lineTotal, currency)}`
+        `• ${l.itemName} × ${l.quantity} — ${formatMoney(l.lineTotal, cur)}`
     )
     .join("\n");
 
   const addr = shippingInfo.address;
-  const addressBlock = [
+  const addressLines = [
     shippingInfo.displayName,
     addr.address_line_1,
     addr.address_line_2,
     `${addr.locality}, ${addr.administrative_district_level_1} ${addr.postal_code}`,
     addr.country,
-    shippingInfo.email,
-    shippingInfo.phone,
-  ]
-    .filter(Boolean)
-    .join("\n");
+  ].filter(Boolean);
+
+  const contactLines = [shippingInfo.email, shippingInfo.phone].filter(Boolean);
 
   const text = [
     `New Pack Mule House web order (${environment || "sandbox"})`,
@@ -571,19 +580,96 @@ function buildOrderEmail({ lines, shipping, total, currency, shippingInfo, order
     "Items:",
     itemLines,
     "",
-    `Shipping: ${formatMoney(shipping, currency)} (flat rate)`,
-    `Total charged: ${formatMoney(total, currency)}`,
+    `Subtotal: ${formatMoney(subtotal ?? total - shipping, cur)}`,
+    `Shipping: ${formatMoney(shipping, cur)} (flat rate)`,
+    `Total charged: ${formatMoney(total, cur)}`,
     "",
     "Ship to:",
-    addressBlock,
+    ...addressLines,
+    ...contactLines,
     "",
-    "Fulfill this order in Square Dashboard → Orders.",
+    "Fulfill in Square Dashboard → Orders.",
   ].join("\n");
 
+  const itemsField = lines
+    .map(
+      (l) =>
+        `**${l.itemName}** × ${l.quantity}\n${formatMoney(l.unitAmount, cur)} each → **${formatMoney(l.lineTotal, cur)}**`
+    )
+    .join("\n\n")
+    .slice(0, 1024);
+
+  const shipToField = [...addressLines, ...contactLines]
+    .join("\n")
+    .slice(0, 1024);
+
+  const envLabel = environment === "production" ? "LIVE" : "SANDBOX";
+  const totalLabel = formatMoney(total, cur);
+
+  // Discord rich embed — fields show cleanly on mobile + desktop
+  const discordEmbed = {
+    title: `New order — ${totalLabel}`,
+    description: `Pack Mule House website · **${envLabel}**`,
+    color: environment === "production" ? 0x5c8a8a : 0xc4a574,
+    fields: [
+      {
+        name: "Items",
+        value: itemsField || "—",
+        inline: false,
+      },
+      {
+        name: "Subtotal",
+        value: formatMoney(subtotal ?? total - shipping, cur),
+        inline: true,
+      },
+      {
+        name: "Shipping",
+        value: `${formatMoney(shipping, cur)} flat`,
+        inline: true,
+      },
+      {
+        name: "Total paid",
+        value: `**${totalLabel}**`,
+        inline: true,
+      },
+      {
+        name: "Ship to",
+        value: shipToField || "—",
+        inline: false,
+      },
+      {
+        name: "Customer email",
+        value: shippingInfo.email || "—",
+        inline: true,
+      },
+      {
+        name: "Phone",
+        value: shippingInfo.phone || "—",
+        inline: true,
+      },
+      {
+        name: "Order ID",
+        value: `\`${orderId || "—"}\``,
+        inline: false,
+      },
+      {
+        name: "Payment ID",
+        value: `\`${paymentId || "—"}\``,
+        inline: false,
+      },
+    ],
+    footer: {
+      text: "Fulfill in Square Dashboard → Orders",
+    },
+    timestamp: new Date().toISOString(),
+  };
+
   return {
-    subject: `[PMH] New order ${formatMoney(total, currency)} — ${shippingInfo.displayName}`,
+    subject: `[PMH] New order ${totalLabel} — ${shippingInfo.displayName}`,
     text,
     replyTo: shippingInfo.email,
+    discordEmbed,
+    discordContent: `**🛒 New order ${totalLabel}** from **${shippingInfo.displayName}**`,
   };
 }
 
@@ -771,6 +857,7 @@ async function handlePay(request, env) {
     const mail = buildOrderEmail({
       lines,
       shipping,
+      subtotal,
       total: orderTotal,
       currency: order.total_money.currency || currency,
       shippingInfo,
