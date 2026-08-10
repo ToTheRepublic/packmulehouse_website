@@ -271,6 +271,37 @@ async function handlePay(request, env) {
   }
 }
 
+function isHtmlOrScript(pathname) {
+  return (
+    pathname === "/" ||
+    pathname.endsWith(".html") ||
+    pathname.endsWith(".js") ||
+    pathname.endsWith(".css")
+  );
+}
+
+async function serveAsset(request, env) {
+  if (!env.ASSETS) {
+    return error("Not found", 404);
+  }
+
+  const res = await env.ASSETS.fetch(request);
+  const url = new URL(request.url);
+
+  // During sandbox polish, avoid sticky HTML/JS edge caches after deploys
+  if (isHtmlOrScript(url.pathname) && res.status === 200) {
+    const headers = new Headers(res.headers);
+    headers.set("Cache-Control", "no-cache, must-revalidate");
+    return new Response(res.body, {
+      status: res.status,
+      statusText: res.statusText,
+      headers,
+    });
+  }
+
+  return res;
+}
+
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
@@ -286,11 +317,7 @@ export default {
         return handlePay(request, env);
       }
 
-      // Everything else: static assets
-      if (env.ASSETS) {
-        return env.ASSETS.fetch(request);
-      }
-      return error("Not found", 404);
+      return serveAsset(request, env);
     } catch (e) {
       console.error(e);
       return error(e.message || "Server error", 500);

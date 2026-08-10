@@ -5,7 +5,9 @@
   "compatibility_date": "2026-08-10",
   "assets": {
     "directory": "./public",
-    "binding": "ASSETS"
+    "binding": "ASSETS",
+    // Run Worker first so we can set no-cache on HTML/JS while iterating
+    "run_worker_first": true
   },
   // Public Square config (safe in frontend / wrangler vars)
   "vars": {
