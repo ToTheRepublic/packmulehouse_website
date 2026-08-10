@@ -1,7 +1,22 @@
 /**
  * Pack Mule House — Cloudflare Worker
- * Catalog, cart checkout, Square Orders + Payments, inventory, merchant email.
+ * Catalog, cart checkout, Square Orders + Payments, inventory, MTO, admin.
  */
+
+import {
+  allocateUnits,
+  consumeMto,
+  createAdminToken,
+  extractBearer,
+  getMtoState,
+  isAdminHost,
+  lowStockThreshold,
+  maxOrderable,
+  mtoPromise,
+  resetMto,
+  setMtoState,
+  verifyAdminToken,
+} from "./mto.js";
 
 const SQUARE_VERSION = "2025-01-23";
 const SHIPPING_CENTS = 1000; // $10.00 flat
@@ -187,12 +202,21 @@ function mapCatalogToProducts(objects, inventoryMap) {
 
 async function handleConfig(env) {
   const ship = shippingCents(env);
+  const mto = await getMtoState(env);
   return json({
     applicationId: env.SQUARE_APPLICATION_ID,
     locationId: env.SQUARE_LOCATION_ID,
     environment: env.SQUARE_ENVIRONMENT || "sandbox",
     shippingCents: ship,
     shippingLabel: formatMoney(ship, "USD"),
+    lowStockThreshold: lowStockThreshold(env),
+    mto: {
+      enabled: mto.enabled,
+      remaining: mto.remaining,
+      max: mto.max,
+      open: mto.open,
+      promise: mto.promise,
+    },
   });
 }
 
@@ -215,16 +239,65 @@ async function handleCatalog(env) {
     console.warn("inventory lookup failed", e.message);
   }
 
-  const products = mapCatalogToProducts(objects, inventoryMap);
+  const mto = await getMtoState(env);
+  const threshold = lowStockThreshold(env);
+  const products = mapCatalogToProducts(objects, inventoryMap).map((p) => {
+    const stock = p.stock;
+    const tracked = p.trackInventory;
+    let stockDisplay = null; // hide by default
+    let stockTone = null; // "fomo" | "mto" | "out"
+    let availability = "in_stock";
+
+    if (tracked && stock != null) {
+      if (stock <= 0) {
+        if (mto.open) {
+          stockDisplay = "Made to order";
+          stockTone = "mto";
+          availability = "mto";
+        } else {
+          stockDisplay = "Currently unavailable";
+          stockTone = "out";
+          availability = "unavailable";
+        }
+      } else if (stock < threshold) {
+        stockDisplay = `Only ${stock} left`;
+        stockTone = "fomo";
+        availability = "low";
+      }
+    }
+
+    const maxQty = maxOrderable(
+      tracked ? stock : null,
+      mto
+    );
+
+    return {
+      ...p,
+      stockDisplay,
+      stockTone,
+      availability,
+      maxQty,
+      mtoOpen: mto.open,
+    };
+  });
+
   return json(
     {
       products,
       count: products.length,
       shippingCents: shippingCents(env),
       shippingLabel: formatMoney(shippingCents(env), "USD"),
+      lowStockThreshold: threshold,
+      mto: {
+        enabled: mto.enabled,
+        remaining: mto.remaining,
+        max: mto.max,
+        open: mto.open,
+        promise: mto.promise,
+      },
     },
     200,
-    { "Cache-Control": "public, max-age=15" }
+    { "Cache-Control": "public, max-age=10" }
   );
 }
 
@@ -327,32 +400,65 @@ function parseAddress(body) {
   };
 }
 
-async function assertInventory(env, lines) {
-  const tracked = lines.filter((l) => l.trackInventory);
-  if (!tracked.length) return;
+/**
+ * Allocate each line into in-stock vs MTO. Throws if not fulfillable.
+ * Mutates lines with .inStockQty, .mtoQty.
+ */
+async function allocateOrderLines(env, lines) {
+  const mto = await getMtoState(env);
+  const trackedIds = lines
+    .filter((l) => l.trackInventory)
+    .map((l) => l.variationId);
+  let counts = new Map();
+  if (trackedIds.length) {
+    counts = await batchInventoryCounts(env, trackedIds);
+  }
 
-  const counts = await batchInventoryCounts(
-    env,
-    tracked.map((l) => l.variationId)
-  );
-
+  let totalMto = 0;
   const problems = [];
-  for (const line of tracked) {
-    const available = counts.has(line.variationId)
-      ? counts.get(line.variationId)
-      : 0;
-    if (available < line.quantity) {
-      problems.push(
-        `${line.itemName}: need ${line.quantity}, only ${available} in stock`
-      );
+
+  for (const line of lines) {
+    const stock = line.trackInventory
+      ? counts.has(line.variationId)
+        ? counts.get(line.variationId)
+        : 0
+      : null;
+    const alloc = allocateUnits(stock, line.quantity, mto);
+    if (!alloc.ok) {
+      problems.push(`${line.itemName}: ${alloc.error}`);
+      continue;
     }
+    line.inStockQty = alloc.inStock;
+    line.mtoQty = alloc.mto;
+    line.stockAtOrder = stock;
+    totalMto += alloc.mto;
   }
 
   if (problems.length) {
-    const err = new Error(`Insufficient inventory — ${problems.join("; ")}`);
+    const err = new Error(problems.join(" "));
     err.status = 409;
     throw err;
   }
+
+  // Capacity for sum of MTO across cart
+  if (totalMto > 0) {
+    if (!mto.open) {
+      const err = new Error(
+        "Made-to-order is on standby. Reduce quantities to what is in stock."
+      );
+      err.status = 409;
+      throw err;
+    }
+    if (totalMto > mto.remaining) {
+      const err = new Error(
+        `Not enough made-to-order capacity for this cart (need ${totalMto}, ${mto.remaining} left).`
+      );
+      err.status = 409;
+      throw err;
+    }
+  }
+
+  return { totalMto, mto };
 }
 
 /**
@@ -551,13 +657,20 @@ function buildOrderEmail({
   orderId,
   paymentId,
   environment,
+  totalMto,
+  mtoRemainingAfter,
+  mtoPromiseText,
 }) {
   const cur = currency || "USD";
+  const hasMto = (totalMto || 0) > 0;
   const itemLines = lines
-    .map(
-      (l) =>
-        `• ${l.itemName} × ${l.quantity} — ${formatMoney(l.lineTotal, cur)}`
-    )
+    .map((l) => {
+      const parts = [];
+      if (l.inStockQty) parts.push(`${l.inStockQty} in stock`);
+      if (l.mtoQty) parts.push(`${l.mtoQty} MTO`);
+      const tag = parts.length ? ` [${parts.join(" + ")}]` : "";
+      return `• ${l.itemName} × ${l.quantity}${tag} — ${formatMoney(l.lineTotal, cur)}`;
+    })
     .join("\n");
 
   const addr = shippingInfo.address;
@@ -573,6 +686,7 @@ function buildOrderEmail({
 
   const text = [
     `New Pack Mule House web order (${environment || "sandbox"})`,
+    hasMto ? `⚠ Includes made-to-order units — ${mtoPromiseText || "ships within 1 week"}` : "",
     "",
     `Order ID: ${orderId || "—"}`,
     `Payment ID: ${paymentId || "—"}`,
@@ -583,19 +697,25 @@ function buildOrderEmail({
     `Subtotal: ${formatMoney(subtotal ?? total - shipping, cur)}`,
     `Shipping: ${formatMoney(shipping, cur)} (flat rate)`,
     `Total charged: ${formatMoney(total, cur)}`,
+    hasMto ? `MTO units this order: ${totalMto} · remaining after: ${mtoRemainingAfter}` : "",
     "",
     "Ship to:",
     ...addressLines,
     ...contactLines,
     "",
-    "Fulfill in Square Dashboard → Orders.",
-  ].join("\n");
+    "Ship ALL items together. Fulfill in Square Dashboard → Orders.",
+  ]
+    .filter((line) => line !== "")
+    .join("\n");
 
   const itemsField = lines
-    .map(
-      (l) =>
-        `**${l.itemName}** × ${l.quantity}\n${formatMoney(l.unitAmount, cur)} each → **${formatMoney(l.lineTotal, cur)}**`
-    )
+    .map((l) => {
+      const parts = [];
+      if (l.inStockQty) parts.push(`${l.inStockQty} stock`);
+      if (l.mtoQty) parts.push(`${l.mtoQty} MTO`);
+      const tag = parts.length ? ` · ${parts.join(" + ")}` : "";
+      return `**${l.itemName}** × ${l.quantity}${tag}\n${formatMoney(l.unitAmount, cur)} each → **${formatMoney(l.lineTotal, cur)}**`;
+    })
     .join("\n\n")
     .slice(0, 1024);
 
@@ -606,70 +726,68 @@ function buildOrderEmail({
   const envLabel = environment === "production" ? "LIVE" : "SANDBOX";
   const totalLabel = formatMoney(total, cur);
 
-  // Discord rich embed — fields show cleanly on mobile + desktop
+  const fields = [
+    { name: "Items", value: itemsField || "—", inline: false },
+    {
+      name: "Subtotal",
+      value: formatMoney(subtotal ?? total - shipping, cur),
+      inline: true,
+    },
+    {
+      name: "Shipping",
+      value: `${formatMoney(shipping, cur)} flat`,
+      inline: true,
+    },
+    { name: "Total paid", value: `**${totalLabel}**`, inline: true },
+  ];
+
+  if (hasMto) {
+    fields.push({
+      name: "Made to order",
+      value: `**${totalMto} unit(s)**\n${mtoPromiseText || "Ships within 1 week"}\nMTO left after: **${mtoRemainingAfter}**`,
+      inline: false,
+    });
+  }
+
+  fields.push(
+    { name: "Ship to", value: shipToField || "—", inline: false },
+    {
+      name: "Customer email",
+      value: shippingInfo.email || "—",
+      inline: true,
+    },
+    { name: "Phone", value: shippingInfo.phone || "—", inline: true },
+    { name: "Order ID", value: `\`${orderId || "—"}\``, inline: false },
+    { name: "Payment ID", value: `\`${paymentId || "—"}\``, inline: false }
+  );
+
   const discordEmbed = {
-    title: `New order — ${totalLabel}`,
-    description: `Pack Mule House website · **${envLabel}**`,
-    color: environment === "production" ? 0x5c8a8a : 0xc4a574,
-    fields: [
-      {
-        name: "Items",
-        value: itemsField || "—",
-        inline: false,
-      },
-      {
-        name: "Subtotal",
-        value: formatMoney(subtotal ?? total - shipping, cur),
-        inline: true,
-      },
-      {
-        name: "Shipping",
-        value: `${formatMoney(shipping, cur)} flat`,
-        inline: true,
-      },
-      {
-        name: "Total paid",
-        value: `**${totalLabel}**`,
-        inline: true,
-      },
-      {
-        name: "Ship to",
-        value: shipToField || "—",
-        inline: false,
-      },
-      {
-        name: "Customer email",
-        value: shippingInfo.email || "—",
-        inline: true,
-      },
-      {
-        name: "Phone",
-        value: shippingInfo.phone || "—",
-        inline: true,
-      },
-      {
-        name: "Order ID",
-        value: `\`${orderId || "—"}\``,
-        inline: false,
-      },
-      {
-        name: "Payment ID",
-        value: `\`${paymentId || "—"}\``,
-        inline: false,
-      },
-    ],
+    title: hasMto
+      ? `New order (MTO) — ${totalLabel}`
+      : `New order — ${totalLabel}`,
+    description: `Pack Mule House website · **${envLabel}**${
+      hasMto ? " · 🛠 made-to-order" : ""
+    }`,
+    color: hasMto
+      ? 0xd4a017
+      : environment === "production"
+        ? 0x5c8a8a
+        : 0xc4a574,
+    fields,
     footer: {
-      text: "Fulfill in Square Dashboard → Orders",
+      text: "Ship all together · Square Dashboard → Orders",
     },
     timestamp: new Date().toISOString(),
   };
 
   return {
-    subject: `[PMH] New order ${totalLabel} — ${shippingInfo.displayName}`,
+    subject: `[PMH]${hasMto ? " MTO" : ""} New order ${totalLabel} — ${shippingInfo.displayName}`,
     text,
     replyTo: shippingInfo.email,
     discordEmbed,
-    discordContent: `**🛒 New order ${totalLabel}** from **${shippingInfo.displayName}**`,
+    discordContent: hasMto
+      ? `**🛠 MTO order ${totalLabel}** from **${shippingInfo.displayName}** — ship all within 1 week`
+      : `**🛒 New order ${totalLabel}** from **${shippingInfo.displayName}**`,
   };
 }
 
@@ -728,8 +846,9 @@ async function handlePay(request, env) {
     }
   }
 
+  let allocation;
   try {
-    await assertInventory(env, lines);
+    allocation = await allocateOrderLines(env, lines);
   } catch (e) {
     return error(e.message, e.status || 409, e.details);
   }
@@ -772,12 +891,18 @@ async function handlePay(request, env) {
                   : {}),
                 address: shippingInfo.address,
               },
+              shipping_note:
+                allocation.totalMto > 0
+                  ? `MADE TO ORDER: ${allocation.totalMto} unit(s). Ship ALL items together within 1 week.`
+                  : "Ship all items together.",
             },
           },
         ],
         metadata: {
           source: "packmulehouse-website",
           channel: "custom_web",
+          mto_units: String(allocation.totalMto || 0),
+          ship_together: "true",
         },
       },
     };
@@ -850,6 +975,17 @@ async function handlePay(request, env) {
     return error(e.message || "Payment failed", e.status || 502, e.details);
   }
 
+  // 2b) Consume MTO capacity only after successful payment
+  let mtoAfter = allocation.mto;
+  try {
+    if (allocation.totalMto > 0) {
+      mtoAfter = await consumeMto(env, allocation.totalMto);
+    }
+  } catch (e) {
+    // Payment already succeeded — log loudly; do not fail the customer
+    console.error("MTO capacity consume failed after payment", e);
+  }
+
   // 3) Merchant notifications (non-fatal if a channel fails)
   let notifyResult = null;
   let notifyError = null;
@@ -864,6 +1000,9 @@ async function handlePay(request, env) {
       orderId: order.id,
       paymentId: payment?.id,
       environment: env.SQUARE_ENVIRONMENT || "sandbox",
+      totalMto: allocation.totalMto,
+      mtoRemainingAfter: mtoAfter?.remaining ?? allocation.mto?.remaining,
+      mtoPromiseText: mtoPromise(env),
     });
     notifyResult = await notifyMerchant(env, mail);
   } catch (e) {
@@ -892,17 +1031,84 @@ async function handlePay(request, env) {
       variationId: l.variationId,
       itemName: l.itemName,
       quantity: l.quantity,
+      inStockQty: l.inStockQty || 0,
+      mtoQty: l.mtoQty || 0,
       lineTotal: l.lineTotal,
       lineTotalLabel: formatMoney(l.lineTotal, l.currency),
     })),
     itemCount: lines.reduce((n, l) => n + l.quantity, 0),
+    mtoUnits: allocation.totalMto || 0,
+    mtoPromise: mtoPromise(env),
+    mtoRemaining: mtoAfter?.remaining,
+    shipTogether: true,
     notified: channelsOk.length > 0,
     notifyChannels: channelsOk,
     notifyError: notifyError || undefined,
-    // back-compat for older frontend
     emailSent: channelsOk.includes("resend") || channelsOk.includes("formsubmit"),
     emailError: notifyError || undefined,
   });
+}
+
+async function requireAdmin(request, env) {
+  const token = extractBearer(request);
+  if (!(await verifyAdminToken(env, token))) {
+    return error("Unauthorized", 401);
+  }
+  return null;
+}
+
+async function handleAdminLogin(request, env) {
+  let body;
+  try {
+    body = await request.json();
+  } catch {
+    return error("Invalid JSON");
+  }
+  if (!env.ADMIN_PASSWORD) {
+    return error("ADMIN_PASSWORD is not configured on the server", 500);
+  }
+  if (!body.password || body.password !== env.ADMIN_PASSWORD) {
+    return error("Invalid password", 401);
+  }
+  const token = await createAdminToken(env);
+  return json({ ok: true, token, expiresInHours: 12 });
+}
+
+async function handleAdminStatus(request, env) {
+  const denied = await requireAdmin(request, env);
+  if (denied) return denied;
+  const state = await getMtoState(env);
+  return json(state);
+}
+
+async function handleAdminMto(request, env) {
+  const denied = await requireAdmin(request, env);
+  if (denied) return denied;
+  let body;
+  try {
+    body = await request.json();
+  } catch {
+    return error("Invalid JSON");
+  }
+  const action = body.action;
+  if (action === "reset") {
+    return json(await resetMto(env));
+  }
+  if (action === "enable") {
+    return json(await setMtoState(env, { enabled: true }));
+  }
+  if (action === "disable") {
+    return json(await setMtoState(env, { enabled: false }));
+  }
+  if (action === "set") {
+    return json(
+      await setMtoState(env, {
+        remaining: body.remaining,
+        enabled: body.enabled,
+      })
+    );
+  }
+  return error("Unknown action");
 }
 
 function isHtmlOrScript(pathname) {
@@ -914,13 +1120,20 @@ function isHtmlOrScript(pathname) {
   );
 }
 
-async function serveAsset(request, env) {
+async function serveAsset(request, env, rewritePath) {
   if (!env.ASSETS) {
     return error("Not found", 404);
   }
 
-  const res = await env.ASSETS.fetch(request);
-  const url = new URL(request.url);
+  let assetRequest = request;
+  if (rewritePath) {
+    const u = new URL(request.url);
+    u.pathname = rewritePath;
+    assetRequest = new Request(u.toString(), request);
+  }
+
+  const res = await env.ASSETS.fetch(assetRequest);
+  const url = new URL(assetRequest.url);
 
   if (isHtmlOrScript(url.pathname) && res.status === 200) {
     const headers = new Headers(res.headers);
@@ -960,8 +1173,21 @@ async function handleNotifyTest(env) {
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
+    const adminHost = isAdminHost(url.hostname);
 
     try {
+      // --- Admin API ---
+      if (url.pathname === "/api/admin/login" && request.method === "POST") {
+        return handleAdminLogin(request, env);
+      }
+      if (url.pathname === "/api/admin/status" && request.method === "POST") {
+        return handleAdminStatus(request, env);
+      }
+      if (url.pathname === "/api/admin/mto" && request.method === "POST") {
+        return handleAdminMto(request, env);
+      }
+
+      // --- Public API ---
       if (url.pathname === "/api/config") {
         return handleConfig(env);
       }
@@ -973,6 +1199,21 @@ export default {
       }
       if (url.pathname === "/api/notify-test" && request.method === "POST") {
         return handleNotifyTest(env);
+      }
+
+      // Admin host: serve admin app for all non-API paths
+      if (adminHost) {
+        return serveAsset(request, env, "/admin.html");
+      }
+
+      // Path-based admin (works on workers.dev today)
+      // Use /admin.html asset — directory /admin/ causes asset redirect loops
+      if (
+        url.pathname === "/admin" ||
+        url.pathname === "/admin/" ||
+        url.pathname === "/admin.html"
+      ) {
+        return serveAsset(request, env, "/admin.html");
       }
 
       return serveAsset(request, env);

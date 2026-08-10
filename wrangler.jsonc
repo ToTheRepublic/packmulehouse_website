@@ -6,23 +6,30 @@
   "assets": {
     "directory": "./public",
     "binding": "ASSETS",
-    // Run Worker first so we can set no-cache on HTML/JS while iterating
     "run_worker_first": true
   },
-  // Public Square config (safe in frontend / wrangler vars)
+  "kv_namespaces": [
+    {
+      "binding": "MTO_STATE",
+      "id": "364c9dbc453441958387a99da3afb5bd"
+    }
+  ],
   "vars": {
     "SQUARE_APPLICATION_ID": "sandbox-sq0idb-dvcNz5fkPbzX4fuFaxg57Q",
     "SQUARE_LOCATION_ID": "LKJ4C91RD6JQH",
     "SQUARE_ENVIRONMENT": "sandbox",
     "SHIPPING_CENTS": "1000",
     "MERCHANT_NOTIFY_EMAIL": "packmulehouse@gmail.com",
-    // Phone push via ntfy.sh — subscribe on phone to this topic (keep private)
     "NTFY_TOPIC": "packmulehouse-orders-pmh7k2x9",
-    "NTFY_SERVER": "https://ntfy.sh"
+    "NTFY_SERVER": "https://ntfy.sh",
+    // FOMO: only show stock when below this
+    "LOW_STOCK_THRESHOLD": "10",
+    // Made-to-order capacity (you re-enable via admin when drained)
+    "MTO_MAX": "50",
+    "MTO_PROMISE": "Ships within 1 week (all items together)"
   },
-  // Secrets: SQUARE_ACCESS_TOKEN (required)
-  // Optional: RESEND_API_KEY, DISCORD_WEBHOOK_URL, NTFY_TOKEN
-  // Local: .dev.vars (gitignored)
+  // Secrets: SQUARE_ACCESS_TOKEN, ADMIN_PASSWORD
+  // Optional: DISCORD_WEBHOOK_URL, RESEND_API_KEY, TELEGRAM_*, NTFY_TOKEN
   "observability": {
     "enabled": true
   }

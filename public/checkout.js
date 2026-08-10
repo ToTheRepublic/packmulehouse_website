@@ -28,6 +28,11 @@
 
   let config = null;
   let shippingCents = 1000;
+  let mtoInfo = {
+    open: true,
+    remaining: 50,
+    promise: "Ships within 1 week (all items together)",
+  };
   let productsById = new Map();
   let variationsById = new Map();
   let card = null;
@@ -148,11 +153,31 @@
           ...v,
           productId: p.id,
           productName: p.name,
+          stock: v.stock != null ? v.stock : p.stock,
+          trackInventory:
+            v.trackInventory != null ? v.trackInventory : p.trackInventory,
+          maxQty: p.maxQty,
         });
       }
     }
     cart = cart.filter((l) => variationsById.has(l.variationId));
+    // Cap cart lines to current max (stock + MTO)
+    for (const line of cart) {
+      const max = lineMaxQty(variationsById.get(line.variationId));
+      if (line.quantity > max) line.quantity = Math.max(1, max);
+      if (max <= 0) {
+        cart = cart.filter((l) => l.variationId !== line.variationId);
+      }
+    }
     saveCart();
+  }
+
+  function lineMaxQty(variation) {
+    if (!variation) return 20;
+    if (variation.maxQty != null) return Math.max(0, variation.maxQty);
+    if (!variation.trackInventory || variation.stock == null) return 20;
+    const mto = mtoInfo.open ? mtoInfo.remaining : 0;
+    return Math.min(20, Math.max(0, variation.stock) + mto);
   }
 
   function addToCart(product, quantity) {
@@ -164,39 +189,68 @@
       return;
     }
 
-    if (variation.trackInventory && variation.stock != null && variation.stock <= 0) {
-      showToast("Out of stock");
+    const max = lineMaxQty({
+      ...variation,
+      maxQty: product.maxQty,
+      trackInventory: variation.trackInventory ?? product.trackInventory,
+      stock: variation.stock ?? product.stock,
+    });
+
+    if (max <= 0) {
+      showToast(
+        mtoInfo.open
+          ? "Unavailable right now"
+          : "Unavailable (made-to-order on standby)"
+      );
       return;
     }
 
-    const qty = Math.max(1, Math.min(20, quantity || 1));
+    const qty = Math.max(1, Math.min(max, quantity || 1));
     const existing = cart.find((l) => l.variationId === variation.id);
     const nextQty = existing ? existing.quantity + qty : qty;
 
-    if (
-      variation.trackInventory &&
-      variation.stock != null &&
-      nextQty > variation.stock
-    ) {
-      showToast(`Only ${variation.stock} in stock`);
+    if (nextQty > max) {
+      showToast(
+        max > (variation.stock || 0)
+          ? `You can order up to ${max} (includes made-to-order)`
+          : `Only ${max} available`
+      );
+      if (existing) {
+        existing.quantity = max;
+        saveCart();
+      }
       return;
     }
 
     if (existing) {
-      existing.quantity = Math.min(20, nextQty);
+      existing.quantity = nextQty;
     } else {
       cart.push({ variationId: variation.id, quantity: qty });
     }
     saveCart();
-    showToast(`Added ${product.name} to cart`);
+
+    const stock = variation.stock ?? product.stock;
+    const mtoPart =
+      variation.trackInventory && stock != null
+        ? Math.max(0, nextQty - Math.max(0, stock))
+        : 0;
+    if (mtoPart > 0) {
+      showToast(`Added ${product.name} (${mtoPart} made to order)`);
+    } else {
+      showToast(`Added ${product.name} to cart`);
+    }
   }
 
   function setLineQty(variationId, quantity) {
     const v = variationsById.get(variationId);
-    let qty = Math.max(0, Math.min(20, Number(quantity) || 0));
-    if (v?.trackInventory && v.stock != null && qty > v.stock) {
-      qty = v.stock;
-      showToast(`Only ${v.stock} in stock`);
+    const max = lineMaxQty(v);
+    let qty = Math.max(0, Math.min(max || 0, Number(quantity) || 0));
+    if (v && quantity > max) {
+      showToast(
+        max > (v.stock || 0)
+          ? `Max ${max} (stock + made-to-order)`
+          : `Only ${max} available`
+      );
     }
     if (qty <= 0) {
       cart = cart.filter((l) => l.variationId !== variationId);
@@ -206,6 +260,15 @@
     }
     saveCart();
     renderCartLines();
+  }
+
+  function cartHasMto() {
+    for (const line of cart) {
+      const v = variationsById.get(line.variationId);
+      if (!v || !v.trackInventory || v.stock == null) continue;
+      if (line.quantity > Math.max(0, v.stock)) return true;
+    }
+    return false;
   }
 
   function removeLine(variationId) {
@@ -226,8 +289,7 @@
     for (const p of products) {
       const variation =
         p.variations.find((v) => v.id === p.defaultVariationId) || p.variations[0];
-      const outOfStock =
-        variation?.trackInventory && variation.stock != null && variation.stock <= 0;
+      const unavailable = p.availability === "unavailable" || (p.maxQty || 0) <= 0;
 
       const article = document.createElement("article");
       article.className = "product-card";
@@ -266,12 +328,8 @@
       const actions = document.createElement("div");
       actions.className = "product-actions";
 
-      // Per-product quantity picker
       let pickQty = 1;
-      const maxQty =
-        variation?.trackInventory && variation.stock != null
-          ? Math.min(20, Math.max(1, variation.stock))
-          : 20;
+      const maxQty = Math.max(1, p.maxQty || 20);
 
       const qty = document.createElement("div");
       qty.className = "qty-controls";
@@ -284,7 +342,7 @@
       minus.type = "button";
       minus.setAttribute("aria-label", "Decrease quantity");
       minus.textContent = "−";
-      minus.disabled = !!outOfStock;
+      minus.disabled = unavailable;
       minus.addEventListener("click", () => {
         pickQty = Math.max(1, pickQty - 1);
         qtyLabel.textContent = String(pickQty);
@@ -294,7 +352,7 @@
       plus.type = "button";
       plus.setAttribute("aria-label", "Increase quantity");
       plus.textContent = "+";
-      plus.disabled = !!outOfStock;
+      plus.disabled = unavailable;
       plus.addEventListener("click", () => {
         pickQty = Math.min(maxQty, pickQty + 1);
         qtyLabel.textContent = String(pickQty);
@@ -305,20 +363,27 @@
       const btn = document.createElement("button");
       btn.type = "button";
       btn.className = "btn btn-primary btn-sm";
-      btn.textContent = outOfStock ? "Out of stock" : "Add to cart";
-      btn.disabled = !!outOfStock;
+      btn.textContent = unavailable
+        ? "Unavailable"
+        : p.availability === "mto"
+          ? "Order (made to order)"
+          : "Add to cart";
+      btn.disabled = unavailable;
       btn.addEventListener("click", () => addToCart(p, pickQty));
 
       actions.append(qty, btn);
       footer.append(price, actions);
       body.append(h3, desc, footer);
 
-      if (variation?.trackInventory && variation.stock != null) {
+      // FOMO / MTO label only when server provides stockDisplay
+      if (p.stockDisplay) {
         const stock = document.createElement("div");
-        stock.className = "product-stock" + (outOfStock ? " out" : "");
-        stock.textContent = outOfStock
-          ? "Out of stock"
-          : `${variation.stock} in stock`;
+        stock.className =
+          "product-stock" + (p.stockTone ? ` ${p.stockTone}` : "");
+        stock.textContent =
+          p.stockTone === "mto"
+            ? `${p.stockDisplay} · ships within 1 week`
+            : p.stockDisplay;
         body.appendChild(stock);
       }
 
@@ -343,6 +408,15 @@
         '<p class="cart-empty">Your cart is empty. Add an X-Frame kit from the shop.</p>';
       cartCheckoutBtn.disabled = true;
       return;
+    }
+
+    if (cartHasMto()) {
+      const banner = document.createElement("div");
+      banner.className = "mto-banner";
+      banner.innerHTML = `<strong>Made to order included.</strong> ${escapeHtml(
+        mtoInfo.promise || "Ships within 1 week (all items together)"
+      )}`;
+      cartLinesEl.appendChild(banner);
     }
 
     cartCheckoutBtn.disabled = false;
@@ -412,12 +486,23 @@
       .map((line) => {
         const v = variationsById.get(line.variationId);
         if (!v) return "";
+        let note = "";
+        if (v.trackInventory && v.stock != null && line.quantity > v.stock) {
+          const mto = line.quantity - Math.max(0, v.stock);
+          note = ` <span style="color:var(--teal-bright);font-size:0.8rem">(${mto} MTO)</span>`;
+        }
         return `<div class="modal-summary-row">
-          <span>${escapeHtml(v.productName)} × ${line.quantity}</span>
+          <span>${escapeHtml(v.productName)} × ${line.quantity}${note}</span>
           <span>${moneyLabel(v.amount * line.quantity, v.currency)}</span>
         </div>`;
       })
       .join("");
+
+    const mtoNote = cartHasMto()
+      ? `<div class="mto-banner" style="margin-top:0.75rem;margin-bottom:0"><strong>Made to order:</strong> ${escapeHtml(
+          mtoInfo.promise || "Ships within 1 week (all items together)"
+        )}</div>`
+      : "";
 
     paySummary.innerHTML =
       rows +
@@ -428,7 +513,7 @@
       <div class="modal-summary-row total">
         <span>Total</span>
         <span>${moneyLabel(cartGrandTotalCents(), currency)}</span>
-      </div>`;
+      </div>${mtoNote}`;
   }
 
   function escapeHtml(str) {
@@ -674,6 +759,7 @@
       if (!configRes.ok) throw new Error("Could not load payment config");
       config = await configRes.json();
       shippingCents = Number(config.shippingCents) || 1000;
+      if (config.mto) mtoInfo = { ...mtoInfo, ...config.mto };
 
       if (config.environment !== "production" && envBadge) {
         envBadge.hidden = false;
@@ -689,6 +775,7 @@
       if (catalog.shippingCents != null) {
         shippingCents = Number(catalog.shippingCents) || shippingCents;
       }
+      if (catalog.mto) mtoInfo = { ...mtoInfo, ...catalog.mto };
       const products = catalog.products || [];
       indexCatalog(products);
       renderProducts(products);

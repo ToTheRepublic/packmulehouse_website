@@ -775,13 +775,36 @@
     }
 
     .product-stock {
-      font-size: 0.8rem;
-      color: var(--text-dim);
-      margin-top: 0.35rem;
+      font-size: 0.85rem;
+      font-weight: 600;
+      margin-top: 0.45rem;
+    }
+
+    .product-stock.fomo {
+      color: #e8a54b;
+    }
+
+    .product-stock.mto {
+      color: var(--teal-bright);
     }
 
     .product-stock.out {
       color: #e07070;
+    }
+
+    .mto-banner {
+      background: rgba(92, 138, 138, 0.12);
+      border: 1px solid var(--teal);
+      border-radius: var(--radius);
+      padding: 0.85rem 1rem;
+      font-size: 0.88rem;
+      color: var(--text-muted);
+      margin-bottom: 1rem;
+      line-height: 1.45;
+    }
+
+    .mto-banner strong {
+      color: var(--teal-bright);
     }
 
     /* ========== BENEFITS ========== */
@@ -1187,6 +1210,6 @@
 
   <div class="cart-toast" id="cart-toast" role="status" aria-live="polite"></div>
 
-  <script src="/checkout.js?v=6" defer></script>
+  <script src="/checkout.js?v=7" defer></script>
 </body>
 </html>

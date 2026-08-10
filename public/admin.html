@@ -1,0 +1,294 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="robots" content="noindex,nofollow" />
+  <title>Admin · Pack Mule House</title>
+  <style>
+    :root {
+      --bg: #0b0b0b;
+      --surface: #1c1c1c;
+      --border: #2a2a2a;
+      --teal: #5c8a8a;
+      --tan: #c4a574;
+      --text: #eae6dc;
+      --muted: #9a958a;
+      --danger: #e07070;
+      --ok: #7dbe8a;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: system-ui, -apple-system, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+      padding: 2rem 1.25rem;
+      line-height: 1.5;
+    }
+    .wrap { max-width: 520px; margin: 0 auto; }
+    h1 {
+      font-size: 1.4rem;
+      margin-bottom: 0.35rem;
+    }
+    .sub { color: var(--muted); font-size: 0.9rem; margin-bottom: 1.5rem; }
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 1.25rem 1.35rem;
+      margin-bottom: 1rem;
+    }
+    label {
+      display: block;
+      font-size: 0.85rem;
+      color: var(--muted);
+      margin-bottom: 0.35rem;
+    }
+    input {
+      width: 100%;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      color: var(--text);
+      padding: 0.7rem 0.85rem;
+      font: inherit;
+      margin-bottom: 0.85rem;
+    }
+    input:focus { outline: none; border-color: var(--teal); }
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 0.4rem;
+      width: 100%;
+      padding: 0.75rem 1rem;
+      border-radius: 999px;
+      border: none;
+      font: inherit;
+      font-weight: 600;
+      cursor: pointer;
+      margin-top: 0.35rem;
+    }
+    .btn-primary { background: var(--tan); color: #1a140c; }
+    .btn-outline {
+      background: transparent;
+      color: var(--text);
+      border: 1px solid var(--border);
+    }
+    .btn-danger {
+      background: transparent;
+      color: var(--danger);
+      border: 1px solid var(--danger);
+    }
+    .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+    .row { display: flex; gap: 0.6rem; flex-wrap: wrap; }
+    .row .btn { flex: 1; min-width: 140px; }
+    .stat {
+      display: flex;
+      justify-content: space-between;
+      padding: 0.55rem 0;
+      border-bottom: 1px solid var(--border);
+      font-size: 0.95rem;
+    }
+    .stat:last-child { border-bottom: none; }
+    .stat span:last-child { font-weight: 600; color: var(--tan); }
+    .badge {
+      display: inline-block;
+      padding: 0.15rem 0.55rem;
+      border-radius: 999px;
+      font-size: 0.75rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+    }
+    .badge.on { background: rgba(125,190,138,0.2); color: var(--ok); }
+    .badge.off { background: rgba(224,112,112,0.15); color: var(--danger); }
+    .status { min-height: 1.3em; font-size: 0.9rem; margin-top: 0.75rem; }
+    .status.err { color: var(--danger); }
+    .status.ok { color: var(--ok); }
+    .hidden { display: none !important; }
+    .hint { font-size: 0.8rem; color: var(--muted); margin-top: 0.75rem; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <h1>Pack Mule House · Admin</h1>
+    <p class="sub">Made-to-order capacity &amp; standby control</p>
+
+    <div class="card" id="login-card">
+      <label for="password">Password</label>
+      <input type="password" id="password" autocomplete="current-password" />
+      <button type="button" class="btn btn-primary" id="login-btn">Sign in</button>
+      <p class="status" id="login-status"></p>
+    </div>
+
+    <div id="dash" class="hidden">
+      <div class="card">
+        <div class="stat">
+          <span>MTO status</span>
+          <span id="mto-badge" class="badge off">—</span>
+        </div>
+        <div class="stat">
+          <span>Remaining slots</span>
+          <span id="mto-remaining">—</span>
+        </div>
+        <div class="stat">
+          <span>Max capacity</span>
+          <span id="mto-max">—</span>
+        </div>
+        <div class="stat">
+          <span>Customer promise</span>
+          <span id="mto-promise" style="font-weight:500;color:var(--muted);text-align:right;max-width:60%">—</span>
+        </div>
+        <p class="hint">When remaining hits 0, made-to-order goes on standby automatically until you re-enable.</p>
+      </div>
+
+      <div class="card">
+        <label for="set-remaining">Set remaining slots</label>
+        <input type="number" id="set-remaining" min="0" max="500" step="1" />
+        <div class="row">
+          <button type="button" class="btn btn-primary" id="btn-save">Save remaining</button>
+          <button type="button" class="btn btn-outline" id="btn-reset">Reset to max &amp; enable</button>
+        </div>
+        <div class="row" style="margin-top:0.5rem">
+          <button type="button" class="btn btn-outline" id="btn-enable">Enable MTO</button>
+          <button type="button" class="btn btn-danger" id="btn-disable">Standby (disable)</button>
+        </div>
+        <button type="button" class="btn btn-outline" id="btn-logout" style="margin-top:0.85rem">Sign out</button>
+        <p class="status" id="dash-status"></p>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const loginCard = document.getElementById("login-card");
+    const dash = document.getElementById("dash");
+    const loginStatus = document.getElementById("login-status");
+    const dashStatus = document.getElementById("dash-status");
+
+    function token() {
+      return sessionStorage.getItem("pmh_admin_token") || "";
+    }
+
+    function setToken(t) {
+      if (t) sessionStorage.setItem("pmh_admin_token", t);
+      else sessionStorage.removeItem("pmh_admin_token");
+    }
+
+    function setMsg(el, msg, ok) {
+      el.textContent = msg || "";
+      el.className = "status " + (ok ? "ok" : msg ? "err" : "");
+    }
+
+    async function api(path, body) {
+      const res = await fetch(path, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: token() ? `Bearer ${token()}` : "",
+        },
+        body: JSON.stringify(body || {}),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+      return data;
+    }
+
+    function renderState(s) {
+      const badge = document.getElementById("mto-badge");
+      const on = !!s.enabled && Number(s.remaining) > 0;
+      badge.textContent = on ? "Open" : "Standby";
+      badge.className = "badge " + (on ? "on" : "off");
+      document.getElementById("mto-remaining").textContent = String(s.remaining);
+      document.getElementById("mto-max").textContent = String(s.max);
+      document.getElementById("mto-promise").textContent = s.promise || "—";
+      document.getElementById("set-remaining").value = String(s.remaining);
+    }
+
+    async function refresh() {
+      const data = await api("/api/admin/status", {});
+      renderState(data);
+    }
+
+    document.getElementById("login-btn").addEventListener("click", async () => {
+      setMsg(loginStatus, "Signing in…", true);
+      try {
+        const pw = document.getElementById("password").value;
+        const data = await api("/api/admin/login", { password: pw });
+        setToken(data.token);
+        loginCard.classList.add("hidden");
+        dash.classList.remove("hidden");
+        setMsg(loginStatus, "");
+        await refresh();
+      } catch (e) {
+        setMsg(loginStatus, e.message, false);
+      }
+    });
+
+    document.getElementById("password").addEventListener("keydown", (e) => {
+      if (e.key === "Enter") document.getElementById("login-btn").click();
+    });
+
+    document.getElementById("btn-save").addEventListener("click", async () => {
+      try {
+        const remaining = Number(document.getElementById("set-remaining").value);
+        const data = await api("/api/admin/mto", { action: "set", remaining });
+        renderState(data);
+        setMsg(dashStatus, "Saved.", true);
+      } catch (e) {
+        setMsg(dashStatus, e.message, false);
+      }
+    });
+
+    document.getElementById("btn-reset").addEventListener("click", async () => {
+      try {
+        const data = await api("/api/admin/mto", { action: "reset" });
+        renderState(data);
+        setMsg(dashStatus, "Reset to max and enabled.", true);
+      } catch (e) {
+        setMsg(dashStatus, e.message, false);
+      }
+    });
+
+    document.getElementById("btn-enable").addEventListener("click", async () => {
+      try {
+        const data = await api("/api/admin/mto", { action: "enable" });
+        renderState(data);
+        setMsg(dashStatus, "MTO enabled.", true);
+      } catch (e) {
+        setMsg(dashStatus, e.message, false);
+      }
+    });
+
+    document.getElementById("btn-disable").addEventListener("click", async () => {
+      try {
+        const data = await api("/api/admin/mto", { action: "disable" });
+        renderState(data);
+        setMsg(dashStatus, "MTO on standby.", true);
+      } catch (e) {
+        setMsg(dashStatus, e.message, false);
+      }
+    });
+
+    document.getElementById("btn-logout").addEventListener("click", () => {
+      setToken("");
+      dash.classList.add("hidden");
+      loginCard.classList.remove("hidden");
+      document.getElementById("password").value = "";
+    });
+
+    // Auto-resume session
+    (async () => {
+      if (!token()) return;
+      try {
+        await refresh();
+        loginCard.classList.add("hidden");
+        dash.classList.remove("hidden");
+      } catch {
+        setToken("");
+      }
+    })();
+  </script>
+</body>
+</html>
