@@ -356,73 +356,156 @@ async function assertInventory(env, lines) {
 }
 
 /**
- * Notify merchant. Prefer Resend if RESEND_API_KEY is set; otherwise FormSubmit (Gmail).
+ * Multi-channel merchant alerts:
+ * 1) ntfy.sh phone push (default — free, reliable)
+ * 2) Discord webhook (optional DISCORD_WEBHOOK_URL secret)
+ * 3) Resend email (optional RESEND_API_KEY secret)
+ * 4) FormSubmit → Gmail (best-effort; flaky from servers)
  */
-async function sendMerchantEmail(env, payload) {
-  const to = notifyEmail(env);
+async function notifyMerchant(env, payload) {
   const subject = payload.subject;
   const text = payload.text;
-  const html = payload.html || `<pre style="font-family:sans-serif;white-space:pre-wrap">${escapeHtml(text)}</pre>`;
+  const results = [];
+  const errors = [];
 
-  console.log("ORDER_EMAIL", { to, subject, text });
+  console.log("ORDER_NOTIFY", { subject, text });
 
-  if (env.RESEND_API_KEY) {
-    const from =
-      env.EMAIL_FROM || "Pack Mule House <onboarding@resend.dev>";
-    const res = await fetch("https://api.resend.com/emails", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${env.RESEND_API_KEY}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        from,
-        to: [to],
-        subject,
-        text,
-        html,
-      }),
-    });
-    const data = await res.json().catch(() => ({}));
-    if (!res.ok) {
-      console.error("Resend failed", data);
-      throw new Error(data?.message || "Email send failed (Resend)");
+  // --- 1) ntfy push (phone / desktop) ---
+  const ntfyTopic =
+    env.NTFY_TOPIC || "packmulehouse-orders-pmh7k2x9";
+  const ntfyBase = (env.NTFY_SERVER || "https://ntfy.sh").replace(/\/$/, "");
+  try {
+    const headers = {
+      Title: subject.slice(0, 120),
+      Priority: "high",
+      Tags: "package,shopping_cart",
+      "Content-Type": "text/plain; charset=utf-8",
+    };
+    if (env.NTFY_TOKEN) {
+      headers.Authorization = `Bearer ${env.NTFY_TOKEN}`;
     }
-    return { provider: "resend", id: data.id };
+    const res = await fetch(`${ntfyBase}/${encodeURIComponent(ntfyTopic)}`, {
+      method: "POST",
+      headers,
+      body: text,
+    });
+    if (!res.ok) {
+      const body = await res.text();
+      throw new Error(`ntfy ${res.status}: ${body.slice(0, 200)}`);
+    }
+    results.push({ channel: "ntfy", ok: true, topic: ntfyTopic });
+  } catch (e) {
+    console.error("ntfy failed", e);
+    errors.push(`ntfy: ${e.message}`);
   }
 
-  // FormSubmit — first request emails packmulehouse@gmail.com an "Activate Form" link.
-  // After you click it once, order notifications are delivered. Origin headers required.
-  const siteOrigin =
-    env.SITE_ORIGIN ||
-    "https://packmulehouse-website.philip-michael-howard.workers.dev";
-  const res = await fetch(`https://formsubmit.co/ajax/${encodeURIComponent(to)}`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Accept: "application/json",
-      Origin: siteOrigin,
-      Referer: `${siteOrigin}/`,
-    },
-    body: JSON.stringify({
-      name: "Pack Mule House Website",
-      email: payload.replyTo || "orders@packmulehouse.com",
-      _subject: subject,
-      _template: "table",
-      _captcha: "false",
-      message: text,
-    }),
-  });
-  const data = await res.json().catch(() => ({}));
-  // FormSubmit returns success as string "false" until activated
-  if (!res.ok || data.success === "false" || data.success === false) {
-    console.error("FormSubmit failed", data);
-    const msg =
-      data?.message ||
-      "Email send failed — check packmulehouse@gmail.com for a FormSubmit activation link";
-    throw new Error(msg);
+  // --- 2) Discord webhook ---
+  if (env.DISCORD_WEBHOOK_URL) {
+    try {
+      const res = await fetch(env.DISCORD_WEBHOOK_URL, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          content: null,
+          embeds: [
+            {
+              title: subject.slice(0, 250),
+              description: text.slice(0, 4000),
+              color: 0xc4a574,
+            },
+          ],
+        }),
+      });
+      if (!res.ok) {
+        throw new Error(`Discord ${res.status}`);
+      }
+      results.push({ channel: "discord", ok: true });
+    } catch (e) {
+      console.error("Discord failed", e);
+      errors.push(`discord: ${e.message}`);
+    }
   }
-  return { provider: "formsubmit", data };
+
+  // --- 3) Resend email (reliable if configured) ---
+  if (env.RESEND_API_KEY) {
+    try {
+      const to = notifyEmail(env);
+      const from =
+        env.EMAIL_FROM || "Pack Mule House <onboarding@resend.dev>";
+      const html =
+        payload.html ||
+        `<pre style="font-family:sans-serif;white-space:pre-wrap">${escapeHtml(text)}</pre>`;
+      const res = await fetch("https://api.resend.com/emails", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${env.RESEND_API_KEY}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          from,
+          to: [to],
+          subject,
+          text,
+          html,
+          ...(payload.replyTo ? { reply_to: payload.replyTo } : {}),
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(data?.message || `Resend ${res.status}`);
+      }
+      results.push({ channel: "resend", ok: true, id: data.id });
+    } catch (e) {
+      console.error("Resend failed", e);
+      errors.push(`resend: ${e.message}`);
+    }
+  }
+
+  // --- 4) FormSubmit → Gmail (optional / best-effort) ---
+  if (env.ENABLE_FORMSUBMIT === "true" || env.ENABLE_FORMSUBMIT === "1") {
+    try {
+      const to = notifyEmail(env);
+      const siteOrigin =
+        env.SITE_ORIGIN ||
+        "https://packmulehouse-website.philip-michael-howard.workers.dev";
+      const res = await fetch(
+        `https://formsubmit.co/ajax/${encodeURIComponent(to)}`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Accept: "application/json",
+            Origin: siteOrigin,
+            Referer: `${siteOrigin}/`,
+          },
+          body: JSON.stringify({
+            name: "Pack Mule House Website",
+            email: payload.replyTo || "orders@packmulehouse.com",
+            _subject: subject,
+            _template: "table",
+            _captcha: "false",
+            message: text,
+          }),
+        }
+      );
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || data.success === "false" || data.success === false) {
+        throw new Error(data?.message || `FormSubmit ${res.status}`);
+      }
+      results.push({ channel: "formsubmit", ok: true });
+    } catch (e) {
+      console.error("FormSubmit failed", e);
+      errors.push(`formsubmit: ${e.message}`);
+    }
+  }
+
+  if (!results.length) {
+    throw new Error(
+      errors.join("; ") || "No notification channels succeeded"
+    );
+  }
+
+  return { results, errors };
 }
 
 function escapeHtml(s) {
@@ -656,9 +739,9 @@ async function handlePay(request, env) {
     return error(e.message || "Payment failed", e.status || 502, e.details);
   }
 
-  // 3) Merchant email (non-fatal if email provider fails)
-  let emailResult = null;
-  let emailError = null;
+  // 3) Merchant notifications (non-fatal if a channel fails)
+  let notifyResult = null;
+  let notifyError = null;
   try {
     const mail = buildOrderEmail({
       lines,
@@ -670,11 +753,13 @@ async function handlePay(request, env) {
       paymentId: payment?.id,
       environment: env.SQUARE_ENVIRONMENT || "sandbox",
     });
-    emailResult = await sendMerchantEmail(env, mail);
+    notifyResult = await notifyMerchant(env, mail);
   } catch (e) {
-    emailError = e.message;
-    console.error("Merchant email failed", e);
+    notifyError = e.message;
+    console.error("Merchant notify failed", e);
   }
+
+  const channelsOk = (notifyResult?.results || []).map((r) => r.channel);
 
   return json({
     ok: true,
@@ -699,8 +784,12 @@ async function handlePay(request, env) {
       lineTotalLabel: formatMoney(l.lineTotal, l.currency),
     })),
     itemCount: lines.reduce((n, l) => n + l.quantity, 0),
-    emailSent: !!emailResult && !emailError,
-    emailError: emailError || undefined,
+    notified: channelsOk.length > 0,
+    notifyChannels: channelsOk,
+    notifyError: notifyError || undefined,
+    // back-compat for older frontend
+    emailSent: channelsOk.includes("resend") || channelsOk.includes("formsubmit"),
+    emailError: notifyError || undefined,
   });
 }
 

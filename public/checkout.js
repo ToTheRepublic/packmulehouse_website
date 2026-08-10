@@ -597,8 +597,8 @@
 
       let msg = `Order placed — ${data.amountLabel} charged. Thank you!`;
       if (data.orderId) msg += ` Order ${data.orderId.slice(0, 8)}…`;
-      if (data.emailError) {
-        msg += " (Merchant email may need activation — see note below.)";
+      if (data.notified === false && data.notifyError) {
+        msg += " (Shop notify failed — order is still paid in Square.)";
       }
       setStatus(msg, "success");
       payButton.disabled = true;

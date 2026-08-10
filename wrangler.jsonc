@@ -15,9 +15,13 @@
     "SQUARE_LOCATION_ID": "LKJ4C91RD6JQH",
     "SQUARE_ENVIRONMENT": "sandbox",
     "SHIPPING_CENTS": "1000",
-    "MERCHANT_NOTIFY_EMAIL": "packmulehouse@gmail.com"
+    "MERCHANT_NOTIFY_EMAIL": "packmulehouse@gmail.com",
+    // Phone push via ntfy.sh — subscribe on phone to this topic (keep private)
+    "NTFY_TOPIC": "packmulehouse-orders-pmh7k2x9",
+    "NTFY_SERVER": "https://ntfy.sh"
   },
-  // Secrets: SQUARE_ACCESS_TOKEN (required), RESEND_API_KEY (optional, better email)
+  // Secrets: SQUARE_ACCESS_TOKEN (required)
+  // Optional: RESEND_API_KEY, DISCORD_WEBHOOK_URL, NTFY_TOKEN
   // Local: .dev.vars (gitignored)
   "observability": {
     "enabled": true
