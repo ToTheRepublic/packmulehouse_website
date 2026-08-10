@@ -150,29 +150,58 @@
     }
     const container = document.getElementById("card-container");
     container.innerHTML = "";
-    card = await payments.card({
-      style: {
-        input: {
-          color: "#eae6dc",
-          fontSize: "16px",
-          fontFamily: "Inter, system-ui, sans-serif",
-        },
-        "input::placeholder": {
-          color: "#6b675f",
-        },
-        ".input-container": {
-          borderColor: "#2a2a2a",
-          borderRadius: "10px",
-        },
-        ".input-container.is-focus": {
-          borderColor: "#5c8a8a",
-        },
-        ".input-container.is-error": {
-          borderColor: "#e07070",
-        },
+
+    // Styles must match Square's allowed CardClassSelectors (see customize-styles docs).
+    // Custom webfonts like "Inter" are rejected — use system fonts only.
+    const cardStyle = {
+      ".input-container": {
+        borderColor: "#2a2a2a",
+        borderRadius: "10px",
       },
-    });
-    await card.attach("#card-container");
+      ".input-container.is-focus": {
+        borderColor: "#5c8a8a",
+      },
+      ".input-container.is-error": {
+        borderColor: "#e07070",
+      },
+      ".message-text": {
+        color: "#9a958a",
+      },
+      ".message-icon": {
+        color: "#9a958a",
+      },
+      ".message-text.is-error": {
+        color: "#e07070",
+      },
+      ".message-icon.is-error": {
+        color: "#e07070",
+      },
+      input: {
+        backgroundColor: "#1c1c1c",
+        color: "#eae6dc",
+        fontFamily: "helvetica neue, sans-serif",
+      },
+      "input::placeholder": {
+        color: "#6b675f",
+      },
+      "input.is-error": {
+        color: "#e07070",
+      },
+    };
+
+    try {
+      card = await payments.card({ style: cardStyle });
+      await card.attach("#card-container");
+    } catch (styleErr) {
+      console.warn("Styled card form failed, falling back to defaults:", styleErr);
+      try {
+        if (card) await card.destroy();
+      } catch {
+        /* ignore */
+      }
+      card = await payments.card();
+      await card.attach("#card-container");
+    }
   }
 
   async function openCheckout(product) {
@@ -214,6 +243,9 @@
   }
 
   async function tokenize() {
+    if (!card) {
+      throw new Error("Card form is not ready. Close checkout and try again.");
+    }
     const result = await card.tokenize();
     if (result.status === "OK") return result.token;
     const detail = result.errors
@@ -341,3 +373,4 @@
     init();
   }
 })();
+
