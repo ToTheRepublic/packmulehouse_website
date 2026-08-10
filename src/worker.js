@@ -426,6 +426,31 @@ async function notifyMerchant(env, payload) {
     }
   }
 
+  // --- 2b) Telegram bot ---
+  if (env.TELEGRAM_BOT_TOKEN && env.TELEGRAM_CHAT_ID) {
+    try {
+      const res = await fetch(
+        `https://api.telegram.org/bot${env.TELEGRAM_BOT_TOKEN}/sendMessage`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            chat_id: env.TELEGRAM_CHAT_ID,
+            text: `${subject}\n\n${text}`.slice(0, 4000),
+          }),
+        }
+      );
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || data.ok === false) {
+        throw new Error(data?.description || `Telegram ${res.status}`);
+      }
+      results.push({ channel: "telegram", ok: true });
+    } catch (e) {
+      console.error("Telegram failed", e);
+      errors.push(`telegram: ${e.message}`);
+    }
+  }
+
   // --- 3) Resend email (reliable if configured) ---
   if (env.RESEND_API_KEY) {
     try {
@@ -823,6 +848,28 @@ async function serveAsset(request, env) {
   return res;
 }
 
+async function handleNotifyTest(env) {
+  try {
+    const result = await notifyMerchant(env, {
+      subject: "[PMH] Test notification",
+      text: [
+        "This is a test alert from the Pack Mule House website.",
+        `Time: ${new Date().toISOString()}`,
+        "",
+        "If you got this, order notifications are working.",
+      ].join("\n"),
+      replyTo: notifyEmail(env),
+    });
+    return json({
+      ok: true,
+      channels: result.results.map((r) => r.channel),
+      errors: result.errors,
+    });
+  } catch (e) {
+    return error(e.message || "Notify test failed", 502);
+  }
+}
+
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
@@ -836,6 +883,9 @@ export default {
       }
       if (url.pathname === "/api/pay") {
         return handlePay(request, env);
+      }
+      if (url.pathname === "/api/notify-test" && request.method === "POST") {
+        return handleNotifyTest(env);
       }
 
       return serveAsset(request, env);
