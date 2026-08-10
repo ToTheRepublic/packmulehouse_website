@@ -1,12 +1,20 @@
 {
   "$schema": "./node_modules/wrangler/config-schema.json",
-  // Pack Mule House static site (Workers Static Assets)
   "name": "packmulehouse-website",
+  "main": "src/worker.js",
   "compatibility_date": "2026-08-10",
-  // Only files under public/ are uploaded and served
   "assets": {
-    "directory": "./public"
+    "directory": "./public",
+    "binding": "ASSETS"
   },
+  // Public Square config (safe in frontend / wrangler vars)
+  "vars": {
+    "SQUARE_APPLICATION_ID": "sandbox-sq0idb-dvcNz5fkPbzX4fuFaxg57Q",
+    "SQUARE_LOCATION_ID": "LKJ4C91RD6JQH",
+    "SQUARE_ENVIRONMENT": "sandbox"
+  },
+  // SQUARE_ACCESS_TOKEN is set via: wrangler secret put SQUARE_ACCESS_TOKEN
+  // Local: .dev.vars (gitignored)
   "observability": {
     "enabled": true
   }
