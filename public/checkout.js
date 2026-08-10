@@ -1,8 +1,10 @@
 /**
- * Pack Mule House — product catalog + embedded Square checkout
+ * Pack Mule House — cart + embedded Square checkout
  */
 (function () {
   "use strict";
+
+  const CART_KEY = "pmh_cart_v1";
 
   const grid = document.getElementById("product-grid");
   const envBadge = document.getElementById("env-badge");
@@ -10,14 +12,26 @@
   const form = document.getElementById("checkout-form");
   const payButton = document.getElementById("pay-button");
   const payStatus = document.getElementById("pay-status");
-  const qtySelect = document.getElementById("checkout-qty");
   const emailInput = document.getElementById("checkout-email");
+  const cartBadge = document.getElementById("cart-badge");
+  const cartLinesEl = document.getElementById("cart-lines");
+  const cartSubtotalEl = document.getElementById("cart-subtotal");
+  const panelCart = document.getElementById("panel-cart");
+  const panelPay = document.getElementById("panel-pay");
+  const paySummary = document.getElementById("pay-summary");
+  const checkoutTitle = document.getElementById("checkout-title");
+  const checkoutSubtitle = document.getElementById("checkout-subtitle");
+  const cartCheckoutBtn = document.getElementById("cart-checkout-btn");
+  const toastEl = document.getElementById("cart-toast");
 
   let config = null;
   let productsById = new Map();
+  let variationsById = new Map();
   let card = null;
   let payments = null;
-  let selected = null; // { product, variation }
+  /** @type {{ variationId: string, quantity: number }[]} */
+  let cart = loadCart();
+  let toastTimer = null;
 
   function moneyLabel(amountCents, currency) {
     try {
@@ -28,6 +42,66 @@
     } catch {
       return `$${((amountCents || 0) / 100).toFixed(2)}`;
     }
+  }
+
+  function loadCart() {
+    try {
+      const raw = localStorage.getItem(CART_KEY);
+      if (!raw) return [];
+      const parsed = JSON.parse(raw);
+      if (!Array.isArray(parsed)) return [];
+      return parsed
+        .filter((l) => l && l.variationId)
+        .map((l) => ({
+          variationId: String(l.variationId),
+          quantity: Math.max(1, Math.min(20, Number(l.quantity) || 1)),
+        }));
+    } catch {
+      return [];
+    }
+  }
+
+  function saveCart() {
+    try {
+      localStorage.setItem(CART_KEY, JSON.stringify(cart));
+    } catch {
+      /* ignore quota */
+    }
+    updateCartBadge();
+  }
+
+  function cartCount() {
+    return cart.reduce((n, l) => n + l.quantity, 0);
+  }
+
+  function cartSubtotalCents() {
+    let total = 0;
+    for (const line of cart) {
+      const v = variationsById.get(line.variationId);
+      if (v) total += v.amount * line.quantity;
+    }
+    return total;
+  }
+
+  function cartCurrency() {
+    for (const line of cart) {
+      const v = variationsById.get(line.variationId);
+      if (v) return v.currency || "USD";
+    }
+    return "USD";
+  }
+
+  function updateCartBadge() {
+    const n = cartCount();
+    cartBadge.textContent = String(n);
+    cartBadge.dataset.count = String(n);
+  }
+
+  function showToast(message) {
+    toastEl.textContent = message;
+    toastEl.classList.add("show");
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => toastEl.classList.remove("show"), 2200);
   }
 
   function setStatus(message, type) {
@@ -56,6 +130,61 @@
     });
   }
 
+  function indexCatalog(products) {
+    productsById = new Map();
+    variationsById = new Map();
+    for (const p of products) {
+      productsById.set(p.id, p);
+      for (const v of p.variations || []) {
+        variationsById.set(v.id, {
+          ...v,
+          productId: p.id,
+          productName: p.name,
+        });
+      }
+    }
+    // Drop cart lines for products no longer in catalog
+    cart = cart.filter((l) => variationsById.has(l.variationId));
+    saveCart();
+  }
+
+  function addToCart(product, quantity) {
+    const variation =
+      product.variations.find((v) => v.id === product.defaultVariationId) ||
+      product.variations[0];
+    if (!variation) {
+      showToast("This product can’t be added right now.");
+      return;
+    }
+    const qty = Math.max(1, Math.min(20, quantity || 1));
+    const existing = cart.find((l) => l.variationId === variation.id);
+    if (existing) {
+      existing.quantity = Math.min(20, existing.quantity + qty);
+    } else {
+      cart.push({ variationId: variation.id, quantity: qty });
+    }
+    saveCart();
+    showToast(`Added ${product.name} to cart`);
+  }
+
+  function setLineQty(variationId, quantity) {
+    const qty = Math.max(0, Math.min(20, Number(quantity) || 0));
+    if (qty <= 0) {
+      cart = cart.filter((l) => l.variationId !== variationId);
+    } else {
+      const line = cart.find((l) => l.variationId === variationId);
+      if (line) line.quantity = qty;
+    }
+    saveCart();
+    renderCartLines();
+  }
+
+  function removeLine(variationId) {
+    cart = cart.filter((l) => l.variationId !== variationId);
+    saveCart();
+    renderCartLines();
+  }
+
   function renderProducts(products) {
     if (!products.length) {
       grid.innerHTML =
@@ -64,11 +193,8 @@
     }
 
     grid.innerHTML = "";
-    productsById = new Map();
 
     for (const p of products) {
-      productsById.set(p.id, p);
-
       const article = document.createElement("article");
       article.className = "product-card";
 
@@ -106,8 +232,8 @@
       const btn = document.createElement("button");
       btn.type = "button";
       btn.className = "btn btn-primary btn-sm";
-      btn.textContent = "Buy";
-      btn.addEventListener("click", () => openCheckout(p));
+      btn.textContent = "Add to cart";
+      btn.addEventListener("click", () => addToCart(p, 1));
 
       footer.append(price, btn);
       body.append(h3, desc, footer);
@@ -116,20 +242,157 @@
     }
   }
 
-  function updateTotals() {
-    if (!selected) return;
-    const qty = Math.max(1, Number(qtySelect.value) || 1);
-    const unit = selected.variation.amount;
-    const currency = selected.variation.currency;
-    document.getElementById("checkout-unit-price").textContent = moneyLabel(
-      unit,
-      currency
-    );
-    document.getElementById("checkout-qty-label").textContent = String(qty);
-    document.getElementById("checkout-total").textContent = moneyLabel(
-      unit * qty,
-      currency
-    );
+  function renderCartLines() {
+    cartLinesEl.innerHTML = "";
+    const currency = cartCurrency();
+    cartSubtotalEl.textContent = moneyLabel(cartSubtotalCents(), currency);
+
+    if (!cart.length) {
+      cartLinesEl.innerHTML =
+        '<p class="cart-empty">Your cart is empty. Add an X-Frame kit from the shop.</p>';
+      cartCheckoutBtn.disabled = true;
+      return;
+    }
+
+    cartCheckoutBtn.disabled = false;
+
+    for (const line of cart) {
+      const v = variationsById.get(line.variationId);
+      if (!v) continue;
+
+      const row = document.createElement("div");
+      row.className = "cart-line";
+
+      const name = document.createElement("div");
+      name.className = "cart-line-name";
+      name.textContent = v.productName;
+
+      const linePrice = document.createElement("div");
+      linePrice.className = "cart-line-price";
+      linePrice.textContent = moneyLabel(v.amount * line.quantity, v.currency);
+
+      const meta = document.createElement("div");
+      meta.className = "cart-line-meta";
+
+      const qty = document.createElement("div");
+      qty.className = "qty-controls";
+      qty.setAttribute("aria-label", `Quantity for ${v.productName}`);
+
+      const minus = document.createElement("button");
+      minus.type = "button";
+      minus.setAttribute("aria-label", "Decrease quantity");
+      minus.textContent = "−";
+      minus.addEventListener("click", () =>
+        setLineQty(line.variationId, line.quantity - 1)
+      );
+
+      const qtyLabel = document.createElement("span");
+      qtyLabel.textContent = String(line.quantity);
+
+      const plus = document.createElement("button");
+      plus.type = "button";
+      plus.setAttribute("aria-label", "Increase quantity");
+      plus.textContent = "+";
+      plus.addEventListener("click", () =>
+        setLineQty(line.variationId, line.quantity + 1)
+      );
+
+      qty.append(minus, qtyLabel, plus);
+
+      const unit = document.createElement("span");
+      unit.style.color = "var(--text-muted)";
+      unit.style.fontSize = "0.85rem";
+      unit.textContent = `${moneyLabel(v.amount, v.currency)} each`;
+
+      const remove = document.createElement("button");
+      remove.type = "button";
+      remove.className = "cart-line-remove";
+      remove.textContent = "Remove";
+      remove.addEventListener("click", () => removeLine(line.variationId));
+
+      meta.append(qty, unit, remove);
+      row.append(name, linePrice, meta);
+      cartLinesEl.appendChild(row);
+    }
+  }
+
+  function renderPaySummary() {
+    const currency = cartCurrency();
+    const rows = cart
+      .map((line) => {
+        const v = variationsById.get(line.variationId);
+        if (!v) return "";
+        return `<div class="modal-summary-row">
+          <span>${escapeHtml(v.productName)} × ${line.quantity}</span>
+          <span>${moneyLabel(v.amount * line.quantity, v.currency)}</span>
+        </div>`;
+      })
+      .join("");
+
+    paySummary.innerHTML =
+      rows +
+      `<div class="modal-summary-row total">
+        <span>Total</span>
+        <span>${moneyLabel(cartSubtotalCents(), currency)}</span>
+      </div>`;
+  }
+
+  function escapeHtml(str) {
+    return String(str)
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;");
+  }
+
+  function openModal(step) {
+    modal.hidden = false;
+    requestAnimationFrame(() => modal.classList.add("open"));
+    document.body.style.overflow = "hidden";
+    if (step === "pay") {
+      showPayStep();
+    } else {
+      showCartStep();
+    }
+  }
+
+  function closeModal() {
+    modal.classList.remove("open");
+    document.body.style.overflow = "";
+    setTimeout(() => {
+      modal.hidden = true;
+    }, 200);
+  }
+
+  function showCartStep() {
+    panelCart.hidden = false;
+    panelPay.hidden = true;
+    checkoutTitle.textContent = "Your cart";
+    checkoutSubtitle.textContent = "Add kits, then checkout when you’re ready";
+    setStatus("");
+    renderCartLines();
+  }
+
+  async function showPayStep() {
+    if (!cart.length) {
+      showCartStep();
+      return;
+    }
+    panelCart.hidden = true;
+    panelPay.hidden = false;
+    checkoutTitle.textContent = "Checkout";
+    checkoutSubtitle.textContent = "Secure payment powered by Square";
+    setStatus("");
+    payButton.disabled = false;
+    emailInput.value = emailInput.value || "";
+    renderPaySummary();
+
+    try {
+      await ensureCard();
+    } catch (e) {
+      console.error(e);
+      setStatus(e.message || "Could not load card form", "error");
+    }
   }
 
   async function ensureCard() {
@@ -139,7 +402,6 @@
     if (!payments) {
       payments = window.Square.payments(config.applicationId, config.locationId);
     }
-    // Recreate card each open so the form is clean
     if (card) {
       try {
         await card.destroy();
@@ -151,8 +413,6 @@
     const container = document.getElementById("card-container");
     container.innerHTML = "";
 
-    // Styles must match Square's allowed CardClassSelectors (see customize-styles docs).
-    // Custom webfonts like "Inter" are rejected — use system fonts only.
     const cardStyle = {
       ".input-container": {
         borderColor: "#2a2a2a",
@@ -164,29 +424,17 @@
       ".input-container.is-error": {
         borderColor: "#e07070",
       },
-      ".message-text": {
-        color: "#9a958a",
-      },
-      ".message-icon": {
-        color: "#9a958a",
-      },
-      ".message-text.is-error": {
-        color: "#e07070",
-      },
-      ".message-icon.is-error": {
-        color: "#e07070",
-      },
+      ".message-text": { color: "#9a958a" },
+      ".message-icon": { color: "#9a958a" },
+      ".message-text.is-error": { color: "#e07070" },
+      ".message-icon.is-error": { color: "#e07070" },
       input: {
         backgroundColor: "#1c1c1c",
         color: "#eae6dc",
         fontFamily: "helvetica neue, sans-serif",
       },
-      "input::placeholder": {
-        color: "#6b675f",
-      },
-      "input.is-error": {
-        color: "#e07070",
-      },
+      "input::placeholder": { color: "#6b675f" },
+      "input.is-error": { color: "#e07070" },
     };
 
     try {
@@ -204,47 +452,9 @@
     }
   }
 
-  async function openCheckout(product) {
-    const variation =
-      product.variations.find((v) => v.id === product.defaultVariationId) ||
-      product.variations[0];
-    if (!variation) {
-      alert("This product has no sellable variation.");
-      return;
-    }
-
-    selected = { product, variation };
-    document.getElementById("checkout-product-name").textContent = product.name;
-    qtySelect.value = "1";
-    emailInput.value = "";
-    setStatus("");
-    payButton.disabled = false;
-    updateTotals();
-
-    modal.hidden = false;
-    // allow transition
-    requestAnimationFrame(() => modal.classList.add("open"));
-    document.body.style.overflow = "hidden";
-
-    try {
-      await ensureCard();
-    } catch (e) {
-      console.error(e);
-      setStatus(e.message || "Could not load card form", "error");
-    }
-  }
-
-  function closeCheckout() {
-    modal.classList.remove("open");
-    document.body.style.overflow = "";
-    setTimeout(() => {
-      modal.hidden = true;
-    }, 200);
-  }
-
   async function tokenize() {
     if (!card) {
-      throw new Error("Card form is not ready. Close checkout and try again.");
+      throw new Error("Card form is not ready. Go back and try again.");
     }
     const result = await card.tokenize();
     if (result.status === "OK") return result.token;
@@ -255,7 +465,6 @@
   }
 
   async function verifyBuyer(token, amountCents, currency) {
-    // SCA / 3DS — required in some regions; safe no-op path if Square skips
     const details = {
       amount: (amountCents / 100).toFixed(2),
       currencyCode: currency || "USD",
@@ -268,7 +477,6 @@
       const verification = await payments.verifyBuyer(token, details);
       return verification && verification.token ? verification.token : undefined;
     } catch (e) {
-      // In US sandbox this often is not required; continue without
       console.warn("verifyBuyer skipped:", e);
       return undefined;
     }
@@ -276,11 +484,10 @@
 
   async function onSubmit(event) {
     event.preventDefault();
-    if (!selected || !card) return;
+    if (!cart.length || !card) return;
 
-    const qty = Math.max(1, Math.min(20, Number(qtySelect.value) || 1));
-    const amount = selected.variation.amount * qty;
-    const currency = selected.variation.currency;
+    const amount = cartSubtotalCents();
+    const currency = cartCurrency();
 
     payButton.disabled = true;
     setStatus("Processing payment…");
@@ -295,8 +502,10 @@
         body: JSON.stringify({
           sourceId,
           verificationToken,
-          variationId: selected.variation.id,
-          quantity: qty,
+          items: cart.map((l) => ({
+            variationId: l.variationId,
+            quantity: l.quantity,
+          })),
           buyerEmail: emailInput.value.trim() || undefined,
         }),
       });
@@ -311,14 +520,19 @@
         throw new Error(detail);
       }
 
+      cart = [];
+      saveCart();
+      renderCartLines();
+
       setStatus(
-        `Paid ${data.amountLabel} — thank you!${data.receiptUrl ? " Check your email for a receipt." : ""}`,
+        `Paid ${data.amountLabel} — thank you!${
+          data.receiptUrl ? " Check your email for a receipt." : ""
+        }`,
         "success"
       );
       payButton.disabled = true;
 
-      // Soft close after success
-      setTimeout(() => closeCheckout(), 2200);
+      setTimeout(() => closeModal(), 2400);
     } catch (e) {
       console.error(e);
       setStatus(e.message || "Payment failed", "error");
@@ -327,6 +541,8 @@
   }
 
   async function init() {
+    updateCartBadge();
+
     try {
       const [configRes, catalogRes] = await Promise.all([
         fetch("/api/config"),
@@ -347,7 +563,9 @@
         throw new Error(err.error || "Could not load catalog");
       }
       const catalog = await catalogRes.json();
-      renderProducts(catalog.products || []);
+      const products = catalog.products || [];
+      indexCatalog(products);
+      renderProducts(products);
     } catch (e) {
       console.error(e);
       grid.innerHTML = `<div class="products-status error">${
@@ -356,15 +574,21 @@
     }
   }
 
-  qtySelect.addEventListener("change", updateTotals);
+  // Events
+  document.getElementById("cart-open").addEventListener("click", () => openModal("cart"));
+  document.getElementById("checkout-close").addEventListener("click", closeModal);
+  document.getElementById("cart-continue-btn").addEventListener("click", closeModal);
+  document.getElementById("pay-back-btn").addEventListener("click", showCartStep);
+  cartCheckoutBtn.addEventListener("click", () => {
+    if (!cart.length) return;
+    showPayStep();
+  });
   form.addEventListener("submit", onSubmit);
-  document.getElementById("checkout-close").addEventListener("click", closeCheckout);
-  document.getElementById("checkout-cancel").addEventListener("click", closeCheckout);
   modal.addEventListener("click", (e) => {
-    if (e.target === modal) closeCheckout();
+    if (e.target === modal) closeModal();
   });
   document.addEventListener("keydown", (e) => {
-    if (e.key === "Escape" && modal.classList.contains("open")) closeCheckout();
+    if (e.key === "Escape" && modal.classList.contains("open")) closeModal();
   });
 
   if (document.readyState === "loading") {
@@ -373,5 +597,3 @@
     init();
   }
 })();
-
-// build 20260810182637

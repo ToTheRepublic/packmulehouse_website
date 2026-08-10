@@ -163,54 +163,28 @@ async function handleCatalog(env) {
   );
 }
 
-async function handlePay(request, env) {
-  if (request.method !== "POST") {
-    return error("Method not allowed", 405);
-  }
-
-  let body;
-  try {
-    body = await request.json();
-  } catch {
-    return error("Invalid JSON body");
-  }
-
-  const sourceId = body.sourceId || body.source_id;
-  const variationId = body.variationId || body.variation_id;
-  const quantity = Math.max(1, Math.min(20, Number(body.quantity) || 1));
-  const buyerEmail = (body.buyerEmail || body.email || "").trim() || undefined;
-  const verificationToken = body.verificationToken || body.verification_token;
-
-  if (!sourceId) return error("Missing sourceId (card token)");
-  if (!variationId) return error("Missing variationId");
-
-  // Never trust client price — look up catalog variation
-  let catalog;
-  try {
-    catalog = await squareFetch(
-      env,
-      `/v2/catalog/object/${encodeURIComponent(variationId)}`
-    );
-  } catch (e) {
-    return error("Product not found in Square catalog", 404, e.details);
-  }
+async function resolveVariationLine(env, variationId, quantity) {
+  const qty = Math.max(1, Math.min(20, Number(quantity) || 1));
+  const catalog = await squareFetch(
+    env,
+    `/v2/catalog/object/${encodeURIComponent(variationId)}`
+  );
 
   const obj = catalog.object;
   if (!obj || obj.type !== "ITEM_VARIATION") {
-    return error("Invalid product variation");
+    const err = new Error("Invalid product variation");
+    err.status = 400;
+    throw err;
   }
 
   const vd = obj.item_variation_data || {};
   const money = vd.price_money;
   if (!money?.amount) {
-    return error("This product has no fixed price in Square");
+    const err = new Error("This product has no fixed price in Square");
+    err.status = 400;
+    throw err;
   }
 
-  const unitAmount = money.amount;
-  const currency = money.currency || "USD";
-  const totalAmount = unitAmount * quantity;
-
-  // Parent item name for note (best-effort)
   let itemName = vd.name || "Item";
   if (vd.item_id) {
     try {
@@ -229,6 +203,79 @@ async function handlePay(request, env) {
     }
   }
 
+  return {
+    variationId,
+    quantity: qty,
+    unitAmount: money.amount,
+    currency: money.currency || "USD",
+    lineTotal: money.amount * qty,
+    itemName,
+  };
+}
+
+async function handlePay(request, env) {
+  if (request.method !== "POST") {
+    return error("Method not allowed", 405);
+  }
+
+  let body;
+  try {
+    body = await request.json();
+  } catch {
+    return error("Invalid JSON body");
+  }
+
+  const sourceId = body.sourceId || body.source_id;
+  const buyerEmail = (body.buyerEmail || body.email || "").trim() || undefined;
+  const verificationToken = body.verificationToken || body.verification_token;
+
+  // Cart: { items: [{ variationId, quantity }] }
+  // Legacy single-item: { variationId, quantity }
+  let rawItems = Array.isArray(body.items) ? body.items : null;
+  if (!rawItems || !rawItems.length) {
+    if (body.variationId || body.variation_id) {
+      rawItems = [
+        {
+          variationId: body.variationId || body.variation_id,
+          quantity: body.quantity || 1,
+        },
+      ];
+    }
+  }
+
+  if (!sourceId) return error("Missing sourceId (card token)");
+  if (!rawItems?.length) return error("Cart is empty");
+  if (rawItems.length > 25) return error("Too many line items");
+
+  // Never trust client price — look up each catalog variation
+  const lines = [];
+  try {
+    for (const line of rawItems) {
+      const variationId = line.variationId || line.variation_id;
+      if (!variationId) return error("Each cart line needs a variationId");
+      lines.push(await resolveVariationLine(env, variationId, line.quantity));
+    }
+  } catch (e) {
+    return error(
+      e.message || "Product not found in Square catalog",
+      e.status || 404,
+      e.details
+    );
+  }
+
+  const currency = lines[0].currency;
+  for (const line of lines) {
+    if (line.currency !== currency) {
+      return error("All cart items must share the same currency");
+    }
+  }
+
+  const totalAmount = lines.reduce((sum, line) => sum + line.lineTotal, 0);
+  if (totalAmount <= 0) return error("Invalid cart total");
+
+  const noteParts = lines.map((l) => `${l.itemName} × ${l.quantity}`);
+  const note = `Pack Mule House web · ${noteParts.join("; ")}`.slice(0, 500);
+
   const paymentBody = {
     source_id: sourceId,
     idempotency_key: crypto.randomUUID(),
@@ -238,7 +285,7 @@ async function handlePay(request, env) {
     },
     location_id: env.SQUARE_LOCATION_ID,
     autocomplete: true,
-    note: `Pack Mule House web · ${itemName} × ${quantity}`,
+    note,
   };
 
   if (buyerEmail) {
@@ -263,8 +310,14 @@ async function handlePay(request, env) {
       amount: totalAmount,
       currency,
       amountLabel: formatMoney(totalAmount, currency),
-      itemName,
-      quantity,
+      items: lines.map((l) => ({
+        variationId: l.variationId,
+        itemName: l.itemName,
+        quantity: l.quantity,
+        lineTotal: l.lineTotal,
+        lineTotalLabel: formatMoney(l.lineTotal, l.currency),
+      })),
+      itemCount: lines.reduce((n, l) => n + l.quantity, 0),
     });
   } catch (e) {
     return error(e.message || "Payment failed", e.status || 502, e.details);

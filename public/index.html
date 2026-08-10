@@ -567,6 +567,182 @@
       font-size: 0.875rem;
     }
 
+    /* ========== CART BUTTON ========== */
+    .cart-btn {
+      position: relative;
+      display: inline-flex;
+      align-items: center;
+      gap: 0.4rem;
+      background: transparent;
+      border: 1px solid var(--border);
+      color: var(--text);
+      border-radius: 999px;
+      padding: 0.55rem 1rem;
+      font: inherit;
+      font-weight: 600;
+      font-size: 0.9rem;
+      cursor: pointer;
+      transition: border-color 0.2s, color 0.2s;
+    }
+
+    .cart-btn:hover {
+      border-color: var(--teal);
+      color: var(--teal-bright);
+    }
+
+    .cart-badge {
+      min-width: 1.25rem;
+      height: 1.25rem;
+      padding: 0 0.35rem;
+      border-radius: 999px;
+      background: var(--tan);
+      color: #1a140c;
+      font-size: 0.72rem;
+      font-weight: 700;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      line-height: 1;
+    }
+
+    .cart-badge:empty,
+    .cart-badge[data-count="0"] {
+      display: none;
+    }
+
+    .header-actions {
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+    }
+
+    .cart-toast {
+      position: fixed;
+      bottom: 1.5rem;
+      left: 50%;
+      transform: translateX(-50%) translateY(120%);
+      z-index: 250;
+      background: var(--surface);
+      border: 1px solid var(--teal);
+      color: var(--text);
+      padding: 0.75rem 1.15rem;
+      border-radius: 999px;
+      font-size: 0.9rem;
+      font-weight: 500;
+      box-shadow: 0 12px 40px rgba(0, 0, 0, 0.45);
+      opacity: 0;
+      transition: transform 0.25s ease, opacity 0.25s ease;
+      pointer-events: none;
+    }
+
+    .cart-toast.show {
+      transform: translateX(-50%) translateY(0);
+      opacity: 1;
+    }
+
+    .cart-lines {
+      display: flex;
+      flex-direction: column;
+      gap: 0.75rem;
+      margin-bottom: 1rem;
+      max-height: 280px;
+      overflow-y: auto;
+    }
+
+    .cart-line {
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 0.35rem 0.75rem;
+      padding: 0.85rem 1rem;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      align-items: center;
+    }
+
+    .cart-line-name {
+      font-weight: 600;
+      font-size: 0.95rem;
+    }
+
+    .cart-line-meta {
+      grid-column: 1 / -1;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 0.75rem;
+      flex-wrap: wrap;
+    }
+
+    .cart-line-price {
+      color: var(--tan);
+      font-weight: 600;
+      font-size: 0.95rem;
+      white-space: nowrap;
+    }
+
+    .qty-controls {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.35rem;
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      padding: 0.15rem;
+    }
+
+    .qty-controls button {
+      width: 28px;
+      height: 28px;
+      border: none;
+      border-radius: 50%;
+      background: transparent;
+      color: var(--text);
+      cursor: pointer;
+      font-size: 1rem;
+      line-height: 1;
+    }
+
+    .qty-controls button:hover {
+      background: rgba(92, 138, 138, 0.2);
+      color: var(--teal-bright);
+    }
+
+    .qty-controls span {
+      min-width: 1.5rem;
+      text-align: center;
+      font-size: 0.9rem;
+      font-weight: 600;
+    }
+
+    .cart-line-remove {
+      background: none;
+      border: none;
+      color: var(--text-dim);
+      font-size: 0.8rem;
+      cursor: pointer;
+      text-decoration: underline;
+      padding: 0;
+    }
+
+    .cart-line-remove:hover {
+      color: #e07070;
+    }
+
+    .cart-empty {
+      text-align: center;
+      color: var(--text-muted);
+      padding: 1.5rem 0.5rem;
+      font-size: 0.95rem;
+    }
+
+    .modal-panel[hidden] {
+      display: none !important;
+    }
+
+    .modal.wide {
+      width: min(480px, 100%);
+    }
+
     /* ========== BENEFITS ========== */
     .benefits {
       background: var(--bg-elevated);
@@ -758,12 +934,17 @@
         <div class="logo-text">Pack Mule <span>House</span></div>
       </a>
 
-      <nav class="nav">
-        <a href="#products">Shop</a>
-        <a href="#how-it-works">How it Works</a>
-        <a href="#about">About</a>
-        <a href="#products" class="btn btn-primary">Shop now</a>
-      </nav>
+      <div class="header-actions">
+        <nav class="nav">
+          <a href="#products">Shop</a>
+          <a href="#how-it-works">How it Works</a>
+          <a href="#about">About</a>
+        </nav>
+        <button type="button" class="cart-btn" id="cart-open" aria-label="Open cart">
+          Cart
+          <span class="cart-badge" id="cart-badge" data-count="0">0</span>
+        </button>
+      </div>
     </div>
   </header>
 
@@ -873,63 +1054,59 @@
     </div>
   </footer>
 
-  <!-- CHECKOUT MODAL -->
+  <!-- CART + CHECKOUT MODAL -->
   <div class="modal-overlay" id="checkout-modal" role="dialog" aria-modal="true" aria-labelledby="checkout-title" hidden>
-    <div class="modal">
+    <div class="modal wide">
       <div class="modal-header">
         <div>
-          <h2 id="checkout-title">Checkout</h2>
-          <p class="modal-sub" id="checkout-product-name">Select a product</p>
+          <h2 id="checkout-title">Your cart</h2>
+          <p class="modal-sub" id="checkout-subtitle">Add kits, then checkout when you’re ready</p>
         </div>
-        <button type="button" class="modal-close" id="checkout-close" aria-label="Close checkout">&times;</button>
+        <button type="button" class="modal-close" id="checkout-close" aria-label="Close">&times;</button>
       </div>
 
-      <div class="modal-summary">
-        <div class="modal-summary-row">
-          <span>Unit price</span>
-          <span id="checkout-unit-price">—</span>
+      <!-- Step 1: cart -->
+      <div class="modal-panel" id="panel-cart">
+        <div class="cart-lines" id="cart-lines"></div>
+        <div class="modal-summary">
+          <div class="modal-summary-row total">
+            <span>Subtotal</span>
+            <span id="cart-subtotal">$0.00</span>
+          </div>
         </div>
-        <div class="modal-summary-row">
-          <span>Quantity</span>
-          <span id="checkout-qty-label">1</span>
-        </div>
-        <div class="modal-summary-row total">
-          <span>Total</span>
-          <span id="checkout-total">—</span>
-        </div>
-      </div>
-
-      <form id="checkout-form" novalidate>
-        <div class="field">
-          <label for="checkout-qty">Quantity</label>
-          <select id="checkout-qty" name="quantity">
-            <option value="1">1</option>
-            <option value="2">2</option>
-            <option value="3">3</option>
-            <option value="4">4</option>
-            <option value="5">5</option>
-          </select>
-        </div>
-
-        <div class="field">
-          <label for="checkout-email">Email (optional receipt)</label>
-          <input type="email" id="checkout-email" name="email" autocomplete="email" placeholder="you@example.com" />
-        </div>
-
-        <div class="field">
-          <label>Card details</label>
-          <div id="card-container"><!-- Square Web Payments card form --></div>
-        </div>
-
         <div class="modal-actions">
-          <button type="submit" class="btn btn-primary" id="pay-button">Pay now</button>
-          <button type="button" class="btn btn-outline" id="checkout-cancel">Cancel</button>
+          <button type="button" class="btn btn-primary" id="cart-checkout-btn">Checkout</button>
+          <button type="button" class="btn btn-outline" id="cart-continue-btn">Continue shopping</button>
         </div>
-        <p class="pay-status" id="pay-status" role="status"></p>
-      </form>
+      </div>
+
+      <!-- Step 2: payment -->
+      <div class="modal-panel" id="panel-pay" hidden>
+        <div class="modal-summary" id="pay-summary"></div>
+
+        <form id="checkout-form" novalidate>
+          <div class="field">
+            <label for="checkout-email">Email (optional receipt)</label>
+            <input type="email" id="checkout-email" name="email" autocomplete="email" placeholder="you@example.com" />
+          </div>
+
+          <div class="field">
+            <label>Card details</label>
+            <div id="card-container"><!-- Square Web Payments card form --></div>
+          </div>
+
+          <div class="modal-actions">
+            <button type="submit" class="btn btn-primary" id="pay-button">Pay now</button>
+            <button type="button" class="btn btn-outline" id="pay-back-btn">Back to cart</button>
+          </div>
+          <p class="pay-status" id="pay-status" role="status"></p>
+        </form>
+      </div>
     </div>
   </div>
 
-  <script src="/checkout.js?v=2" defer></script>
+  <div class="cart-toast" id="cart-toast" role="status" aria-live="polite"></div>
+
+  <script src="/checkout.js?v=3" defer></script>
 </body>
 </html>
