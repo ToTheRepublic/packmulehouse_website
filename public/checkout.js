@@ -266,9 +266,21 @@
     for (const line of cart) {
       const v = variationsById.get(line.variationId);
       if (!v || !v.trackInventory || v.stock == null) continue;
-      if (line.quantity > Math.max(0, v.stock)) return true;
+      const shelf = Math.max(0, Number(v.stock) || 0);
+      if (line.quantity > shelf) return true;
     }
     return false;
+  }
+
+  function cartMtoUnits() {
+    let n = 0;
+    for (const line of cart) {
+      const v = variationsById.get(line.variationId);
+      if (!v || !v.trackInventory || v.stock == null) continue;
+      const shelf = Math.max(0, Number(v.stock) || 0);
+      n += Math.max(0, line.quantity - shelf);
+    }
+    return n;
   }
 
   function removeLine(variationId) {
@@ -413,9 +425,10 @@
     if (cartHasMto()) {
       const banner = document.createElement("div");
       banner.className = "mto-banner";
-      banner.innerHTML = `<strong>Made to order included.</strong> ${escapeHtml(
+      const units = cartMtoUnits();
+      banner.innerHTML = `<strong>Made to order: ${units} unit(s).</strong> ${escapeHtml(
         mtoInfo.promise || "Ships within 1 week (all items together)"
-      )}`;
+      )} · MTO capacity left: ${mtoInfo.remaining ?? "—"}`;
       cartLinesEl.appendChild(banner);
     }
 

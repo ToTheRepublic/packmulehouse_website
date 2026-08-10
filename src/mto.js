@@ -160,9 +160,23 @@ export function allocateUnits(stock, qty, mtoState) {
 
 export function maxOrderable(stock, mtoState) {
   if (stock == null) return 20;
+  // Negative Square counts (from past oversell) count as 0 on the shelf
   const inStock = Math.max(0, Math.floor(stock));
   const mto = mtoState.open ? mtoState.remaining : 0;
   return Math.min(20, inStock + mto);
+}
+
+/** Refund MTO units back into the pool (failed payment, cancel, etc.). */
+export async function releaseMto(env, units) {
+  if (units <= 0 || !env.MTO_STATE) return getMtoState(env);
+  const state = await getMtoState(env);
+  const next = Math.min(state.max, state.remaining + units);
+  await env.MTO_STATE.put("remaining", String(next));
+  // If pool was auto-closed at 0, re-open when capacity returns
+  if (next > 0 && !state.enabled) {
+    await env.MTO_STATE.put("enabled", "true");
+  }
+  return getMtoState(env);
 }
 
 // --- Admin session (HMAC over ADMIN_PASSWORD) ---

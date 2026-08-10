@@ -131,10 +131,60 @@ async function batchInventoryCounts(env, variationIds) {
   for (const c of data.counts || []) {
     if (c.state !== "IN_STOCK") continue;
     const id = c.catalog_object_id;
-    const qty = Number(c.quantity || 0);
+    // Square can go negative if past orders oversold catalog lines — treat as 0 available
+    const qty = Math.max(0, Number(c.quantity || 0));
     map.set(id, (map.get(id) || 0) + qty);
   }
   return map;
+}
+
+/** Track inventory if set on variation or this location override. */
+function variationTracksInventory(vd, locationId) {
+  if (vd?.track_inventory) return true;
+  const override = (vd?.location_overrides || []).find(
+    (o) => o.location_id === locationId
+  );
+  return !!(override && override.track_inventory);
+}
+
+/**
+ * Build Square order line items so only real stock hits inventory.
+ * MTO is a custom line (same price) and does NOT decrement Square stock.
+ */
+function buildSquareLineItems(lines, currency) {
+  const items = [];
+  for (const l of lines) {
+    const inStock = Math.max(0, Number(l.inStockQty) || 0);
+    const mto = Math.max(0, Number(l.mtoQty) || 0);
+    const cur = l.currency || currency || "USD";
+
+    if (inStock > 0) {
+      items.push({
+        quantity: String(inStock),
+        catalog_object_id: l.variationId,
+        note: "In stock",
+      });
+    }
+    if (mto > 0) {
+      items.push({
+        quantity: String(mto),
+        name: `${l.itemName} (Made to order)`,
+        base_price_money: {
+          amount: l.unitAmount,
+          currency: cur,
+        },
+        note: "MTO — do not pull from shelf stock; make & ship with order within 1 week",
+      });
+    }
+    // Untracked items: full qty as catalog if we have a variation id
+    if (!l.trackInventory && l.quantity > 0 && inStock === 0 && mto === 0) {
+      items.push({
+        quantity: String(l.quantity),
+        catalog_object_id: l.variationId,
+      });
+    }
+  }
+  return items;
 }
 
 function mapCatalogToProducts(objects, inventoryMap) {
@@ -159,12 +209,15 @@ function mapCatalogToProducts(objects, inventoryMap) {
       const money = vd.price_money;
       if (!money || money.amount == null) continue;
 
-      const tracks = !!vd.track_inventory;
-      const stock = tracks
+      // locationId passed via inventoryMap.__locationId is awkward; use closure from caller
+      const tracks = variationTracksInventory(vd, inventoryMap.__locationId);
+      const rawStock = tracks
         ? inventoryMap.has(v.id)
           ? inventoryMap.get(v.id)
           : 0
         : null;
+      // Never expose negative stock to the storefront
+      const stock = rawStock == null ? null : Math.max(0, rawStock);
 
       variations.push({
         id: v.id,
@@ -174,6 +227,7 @@ function mapCatalogToProducts(objects, inventoryMap) {
         priceLabel: formatMoney(money.amount, money.currency || "USD"),
         trackInventory: tracks,
         stock,
+        rawStock,
       });
     }
     if (!variations.length) continue;
@@ -238,6 +292,8 @@ async function handleCatalog(env) {
   } catch (e) {
     console.warn("inventory lookup failed", e.message);
   }
+  // So variationTracksInventory can resolve location overrides
+  inventoryMap.__locationId = env.SQUARE_LOCATION_ID;
 
   const mto = await getMtoState(env);
   const threshold = lowStockThreshold(env);
@@ -348,7 +404,7 @@ async function resolveVariationLine(env, variationId, quantity) {
     currency: money.currency || "USD",
     lineTotal: money.amount * qty,
     itemName,
-    trackInventory: !!vd.track_inventory,
+    trackInventory: variationTracksInventory(vd, env.SQUARE_LOCATION_ID),
   };
 }
 
@@ -857,19 +913,51 @@ async function handlePay(request, env) {
   const shipping = shippingCents(env);
   if (subtotal <= 0) return error("Invalid cart total");
 
-  // 1) Create Square Order with catalog line items + shipping + shipment fulfillment
+  // Reserve MTO capacity BEFORE charging so two concurrent checkouts can't oversell the pool
+  let mtoAfter = allocation.mto;
+  let mtoReserved = 0;
+  try {
+    if (allocation.totalMto > 0) {
+      mtoAfter = await consumeMto(env, allocation.totalMto);
+      mtoReserved = allocation.totalMto;
+    }
+  } catch (e) {
+    return error(e.message, e.status || 409, e.details);
+  }
+
+  async function releaseMtoReservation() {
+    if (mtoReserved <= 0 || !env.MTO_STATE) return;
+    try {
+      const state = await getMtoState(env);
+      const next = Math.min(state.max, state.remaining + mtoReserved);
+      await env.MTO_STATE.put("remaining", String(next));
+      // Re-open if we had auto-disabled at 0 and still enabled flag was false due to drain
+      if (next > 0 && !state.enabled) {
+        // Only re-enable if disable was auto from empty pool (we set enabled false at 0)
+        // Don't re-enable if merchant manually stood by with remaining > 0 — remaining was 0 case
+        await env.MTO_STATE.put("enabled", "true");
+      }
+      mtoReserved = 0;
+    } catch (e) {
+      console.error("Failed to release MTO reservation", e);
+    }
+  }
+
+  // 1) Create Square Order — split stock (catalog) vs MTO (custom lines)
   let order;
   try {
+    const lineItems = buildSquareLineItems(lines, currency);
+    if (!lineItems.length) {
+      await releaseMtoReservation();
+      return error("No fulfillable line items");
+    }
+
     const orderBody = {
       idempotency_key: crypto.randomUUID(),
       order: {
         location_id: env.SQUARE_LOCATION_ID,
         reference_id: `web-${Date.now()}`,
-        customer_id: undefined,
-        line_items: lines.map((l) => ({
-          quantity: String(l.quantity),
-          catalog_object_id: l.variationId,
-        })),
+        line_items: lineItems,
         service_charges: [
           {
             name: "Flat rate shipping",
@@ -893,7 +981,7 @@ async function handlePay(request, env) {
               },
               shipping_note:
                 allocation.totalMto > 0
-                  ? `MADE TO ORDER: ${allocation.totalMto} unit(s). Ship ALL items together within 1 week.`
+                  ? `MADE TO ORDER: ${allocation.totalMto} unit(s). Ship ALL items together within 1 week. MTO lines are not shelf stock.`
                   : "Ship all items together.",
             },
           },
@@ -902,13 +990,13 @@ async function handlePay(request, env) {
           source: "packmulehouse-website",
           channel: "custom_web",
           mto_units: String(allocation.totalMto || 0),
+          in_stock_units: String(
+            lines.reduce((n, l) => n + (l.inStockQty || 0), 0)
+          ),
           ship_together: "true",
         },
       },
     };
-
-    // Remove undefined customer_id
-    delete orderBody.order.customer_id;
 
     const created = await squareFetch(env, "/v2/orders", {
       method: "POST",
@@ -917,6 +1005,7 @@ async function handlePay(request, env) {
     order = created.order;
   } catch (e) {
     console.error("CreateOrder failed", e.details || e.message);
+    await releaseMtoReservation();
     return error(
       e.message || "Could not create Square order",
       e.status || 502,
@@ -926,12 +1015,23 @@ async function handlePay(request, env) {
 
   const orderTotal = order.total_money?.amount;
   if (orderTotal == null) {
+    await releaseMtoReservation();
     return error("Square order missing total", 502);
+  }
+
+  // Sanity: order total should match cart (subtotal + shipping)
+  const expected = subtotal + shipping;
+  if (Math.abs(orderTotal - expected) > 1) {
+    console.warn("Order total mismatch", { orderTotal, expected, lines });
   }
 
   // 2) Pay the order
   let payment;
   try {
+    const mtoNote =
+      allocation.totalMto > 0
+        ? ` · MTO ${allocation.totalMto} unit(s)`
+        : "";
     const paymentBody = {
       source_id: sourceId,
       idempotency_key: crypto.randomUUID(),
@@ -943,7 +1043,7 @@ async function handlePay(request, env) {
       location_id: env.SQUARE_LOCATION_ID,
       autocomplete: true,
       buyer_email_address: shippingInfo.email,
-      note: `Pack Mule House web order ${order.id}`,
+      note: `Pack Mule House web order ${order.id}${mtoNote}`,
     };
     if (verificationToken) {
       paymentBody.verification_token = verificationToken;
@@ -954,8 +1054,11 @@ async function handlePay(request, env) {
       body: paymentBody,
     });
     payment = paid.payment;
+    // Payment succeeded — keep MTO reservation (already consumed)
+    mtoReserved = 0;
   } catch (e) {
     console.error("Pay order failed", e.details || e.message);
+    await releaseMtoReservation();
     // Best-effort: cancel open order so it doesn't hang unpaid
     try {
       await squareFetch(env, `/v2/orders/${order.id}`, {
@@ -973,17 +1076,6 @@ async function handlePay(request, env) {
       console.warn("Could not cancel unpaid order", cancelErr.message);
     }
     return error(e.message || "Payment failed", e.status || 502, e.details);
-  }
-
-  // 2b) Consume MTO capacity only after successful payment
-  let mtoAfter = allocation.mto;
-  try {
-    if (allocation.totalMto > 0) {
-      mtoAfter = await consumeMto(env, allocation.totalMto);
-    }
-  } catch (e) {
-    // Payment already succeeded — log loudly; do not fail the customer
-    console.error("MTO capacity consume failed after payment", e);
   }
 
   // 3) Merchant notifications (non-fatal if a channel fails)
