@@ -743,6 +743,35 @@
       width: min(480px, 100%);
     }
 
+    .field-row {
+      display: grid;
+      grid-template-columns: 1.4fr 0.7fr 0.9fr;
+      gap: 0.65rem;
+    }
+
+    @media (max-width: 520px) {
+      .field-row {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    .field-hint {
+      font-size: 0.78rem;
+      color: var(--text-dim);
+      margin-top: 0.4rem;
+      line-height: 1.4;
+    }
+
+    .product-stock {
+      font-size: 0.8rem;
+      color: var(--text-dim);
+      margin-top: 0.35rem;
+    }
+
+    .product-stock.out {
+      color: #e07070;
+    }
+
     /* ========== BENEFITS ========== */
     .benefits {
       background: var(--bg-elevated);
@@ -1068,10 +1097,18 @@
       <!-- Step 1: cart -->
       <div class="modal-panel" id="panel-cart">
         <div class="cart-lines" id="cart-lines"></div>
-        <div class="modal-summary">
-          <div class="modal-summary-row total">
+        <div class="modal-summary" id="cart-summary">
+          <div class="modal-summary-row">
             <span>Subtotal</span>
             <span id="cart-subtotal">$0.00</span>
+          </div>
+          <div class="modal-summary-row">
+            <span>Shipping</span>
+            <span id="cart-shipping">$10.00</span>
+          </div>
+          <div class="modal-summary-row total">
+            <span>Total</span>
+            <span id="cart-total">$10.00</span>
           </div>
         </div>
         <div class="modal-actions">
@@ -1080,19 +1117,50 @@
         </div>
       </div>
 
-      <!-- Step 2: payment -->
+      <!-- Step 2: shipping + payment -->
       <div class="modal-panel" id="panel-pay" hidden>
         <div class="modal-summary" id="pay-summary"></div>
 
         <form id="checkout-form" novalidate>
           <div class="field">
-            <label for="checkout-email">Email (optional receipt)</label>
-            <input type="email" id="checkout-email" name="email" autocomplete="email" placeholder="you@example.com" />
+            <label for="ship-name">Full name</label>
+            <input type="text" id="ship-name" name="name" autocomplete="name" required placeholder="Jane Doe" />
+          </div>
+          <div class="field">
+            <label for="ship-email">Email</label>
+            <input type="email" id="ship-email" name="email" autocomplete="email" required placeholder="you@example.com" />
+          </div>
+          <div class="field">
+            <label for="ship-phone">Phone (optional)</label>
+            <input type="tel" id="ship-phone" name="phone" autocomplete="tel" placeholder="(307) 555-0100" />
+          </div>
+          <div class="field">
+            <label for="ship-line1">Address</label>
+            <input type="text" id="ship-line1" name="address1" autocomplete="address-line1" required placeholder="123 Main St" />
+          </div>
+          <div class="field">
+            <label for="ship-line2">Apt / suite (optional)</label>
+            <input type="text" id="ship-line2" name="address2" autocomplete="address-line2" placeholder="Apt 4" />
+          </div>
+          <div class="field-row">
+            <div class="field">
+              <label for="ship-city">City</label>
+              <input type="text" id="ship-city" name="city" autocomplete="address-level2" required placeholder="Thermopolis" />
+            </div>
+            <div class="field">
+              <label for="ship-state">State</label>
+              <input type="text" id="ship-state" name="state" autocomplete="address-level1" required placeholder="WY" maxlength="2" />
+            </div>
+            <div class="field">
+              <label for="ship-postal">ZIP</label>
+              <input type="text" id="ship-postal" name="postal" autocomplete="postal-code" required placeholder="82443" />
+            </div>
           </div>
 
           <div class="field">
             <label>Card details</label>
             <div id="card-container"><!-- Square Web Payments card form --></div>
+            <p class="field-hint" id="sandbox-card-hint" hidden>Sandbox test card: 4111 1111 1111 1111 · any future exp · CVV 111 · ZIP 12345</p>
           </div>
 
           <div class="modal-actions">
@@ -1107,6 +1175,6 @@
 
   <div class="cart-toast" id="cart-toast" role="status" aria-live="polite"></div>
 
-  <script src="/checkout.js?v=3" defer></script>
+  <script src="/checkout.js?v=4" defer></script>
 </body>
 </html>

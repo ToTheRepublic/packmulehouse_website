@@ -1,5 +1,5 @@
 /**
- * Pack Mule House — cart + embedded Square checkout
+ * Pack Mule House — cart, shipping address, Square order checkout
  */
 (function () {
   "use strict";
@@ -12,10 +12,11 @@
   const form = document.getElementById("checkout-form");
   const payButton = document.getElementById("pay-button");
   const payStatus = document.getElementById("pay-status");
-  const emailInput = document.getElementById("checkout-email");
   const cartBadge = document.getElementById("cart-badge");
   const cartLinesEl = document.getElementById("cart-lines");
   const cartSubtotalEl = document.getElementById("cart-subtotal");
+  const cartShippingEl = document.getElementById("cart-shipping");
+  const cartTotalEl = document.getElementById("cart-total");
   const panelCart = document.getElementById("panel-cart");
   const panelPay = document.getElementById("panel-pay");
   const paySummary = document.getElementById("pay-summary");
@@ -23,8 +24,10 @@
   const checkoutSubtitle = document.getElementById("checkout-subtitle");
   const cartCheckoutBtn = document.getElementById("cart-checkout-btn");
   const toastEl = document.getElementById("cart-toast");
+  const sandboxHint = document.getElementById("sandbox-card-hint");
 
   let config = null;
+  let shippingCents = 1000;
   let productsById = new Map();
   let variationsById = new Map();
   let card = null;
@@ -65,7 +68,7 @@
     try {
       localStorage.setItem(CART_KEY, JSON.stringify(cart));
     } catch {
-      /* ignore quota */
+      /* ignore */
     }
     updateCartBadge();
   }
@@ -89,6 +92,11 @@
       if (v) return v.currency || "USD";
     }
     return "USD";
+  }
+
+  function cartGrandTotalCents() {
+    if (!cart.length) return 0;
+    return cartSubtotalCents() + shippingCents;
   }
 
   function updateCartBadge() {
@@ -143,7 +151,6 @@
         });
       }
     }
-    // Drop cart lines for products no longer in catalog
     cart = cart.filter((l) => variationsById.has(l.variationId));
     saveCart();
   }
@@ -156,10 +163,27 @@
       showToast("This product can’t be added right now.");
       return;
     }
+
+    if (variation.trackInventory && variation.stock != null && variation.stock <= 0) {
+      showToast("Out of stock");
+      return;
+    }
+
     const qty = Math.max(1, Math.min(20, quantity || 1));
     const existing = cart.find((l) => l.variationId === variation.id);
+    const nextQty = existing ? existing.quantity + qty : qty;
+
+    if (
+      variation.trackInventory &&
+      variation.stock != null &&
+      nextQty > variation.stock
+    ) {
+      showToast(`Only ${variation.stock} in stock`);
+      return;
+    }
+
     if (existing) {
-      existing.quantity = Math.min(20, existing.quantity + qty);
+      existing.quantity = Math.min(20, nextQty);
     } else {
       cart.push({ variationId: variation.id, quantity: qty });
     }
@@ -168,7 +192,12 @@
   }
 
   function setLineQty(variationId, quantity) {
-    const qty = Math.max(0, Math.min(20, Number(quantity) || 0));
+    const v = variationsById.get(variationId);
+    let qty = Math.max(0, Math.min(20, Number(quantity) || 0));
+    if (v?.trackInventory && v.stock != null && qty > v.stock) {
+      qty = v.stock;
+      showToast(`Only ${v.stock} in stock`);
+    }
     if (qty <= 0) {
       cart = cart.filter((l) => l.variationId !== variationId);
     } else {
@@ -195,6 +224,11 @@
     grid.innerHTML = "";
 
     for (const p of products) {
+      const variation =
+        p.variations.find((v) => v.id === p.defaultVariationId) || p.variations[0];
+      const outOfStock =
+        variation?.trackInventory && variation.stock != null && variation.stock <= 0;
+
       const article = document.createElement("article");
       article.className = "product-card";
 
@@ -232,11 +266,22 @@
       const btn = document.createElement("button");
       btn.type = "button";
       btn.className = "btn btn-primary btn-sm";
-      btn.textContent = "Add to cart";
+      btn.textContent = outOfStock ? "Out of stock" : "Add to cart";
+      btn.disabled = !!outOfStock;
       btn.addEventListener("click", () => addToCart(p, 1));
 
       footer.append(price, btn);
       body.append(h3, desc, footer);
+
+      if (variation?.trackInventory && variation.stock != null) {
+        const stock = document.createElement("div");
+        stock.className = "product-stock" + (outOfStock ? " out" : "");
+        stock.textContent = outOfStock
+          ? "Out of stock"
+          : `${variation.stock} in stock`;
+        body.appendChild(stock);
+      }
+
       article.append(image, body);
       grid.appendChild(article);
     }
@@ -245,7 +290,13 @@
   function renderCartLines() {
     cartLinesEl.innerHTML = "";
     const currency = cartCurrency();
-    cartSubtotalEl.textContent = moneyLabel(cartSubtotalCents(), currency);
+    const sub = cartSubtotalCents();
+    const grand = cartGrandTotalCents();
+    cartSubtotalEl.textContent = moneyLabel(sub, currency);
+    cartShippingEl.textContent = cart.length
+      ? moneyLabel(shippingCents, currency)
+      : moneyLabel(0, currency);
+    cartTotalEl.textContent = moneyLabel(cart.length ? grand : 0, currency);
 
     if (!cart.length) {
       cartLinesEl.innerHTML =
@@ -276,7 +327,6 @@
 
       const qty = document.createElement("div");
       qty.className = "qty-controls";
-      qty.setAttribute("aria-label", `Quantity for ${v.productName}`);
 
       const minus = document.createElement("button");
       minus.type = "button";
@@ -331,9 +381,13 @@
 
     paySummary.innerHTML =
       rows +
-      `<div class="modal-summary-row total">
+      `<div class="modal-summary-row">
+        <span>Shipping (flat rate)</span>
+        <span>${moneyLabel(shippingCents, currency)}</span>
+      </div>
+      <div class="modal-summary-row total">
         <span>Total</span>
-        <span>${moneyLabel(cartSubtotalCents(), currency)}</span>
+        <span>${moneyLabel(cartGrandTotalCents(), currency)}</span>
       </div>`;
   }
 
@@ -349,11 +403,8 @@
     modal.hidden = false;
     requestAnimationFrame(() => modal.classList.add("open"));
     document.body.style.overflow = "hidden";
-    if (step === "pay") {
-      showPayStep();
-    } else {
-      showCartStep();
-    }
+    if (step === "pay") showPayStep();
+    else showCartStep();
   }
 
   function closeModal() {
@@ -381,10 +432,12 @@
     panelCart.hidden = true;
     panelPay.hidden = false;
     checkoutTitle.textContent = "Checkout";
-    checkoutSubtitle.textContent = "Secure payment powered by Square";
+    checkoutSubtitle.textContent = "Shipping + secure card payment";
     setStatus("");
     payButton.disabled = false;
-    emailInput.value = emailInput.value || "";
+    if (sandboxHint) {
+      sandboxHint.hidden = config?.environment === "production";
+    }
     renderPaySummary();
 
     try {
@@ -396,9 +449,7 @@
   }
 
   async function ensureCard() {
-    if (!window.Square) {
-      throw new Error("Square.js is not loaded");
-    }
+    if (!window.Square) throw new Error("Square.js is not loaded");
     if (!payments) {
       payments = window.Square.payments(config.applicationId, config.locationId);
     }
@@ -414,16 +465,9 @@
     container.innerHTML = "";
 
     const cardStyle = {
-      ".input-container": {
-        borderColor: "#2a2a2a",
-        borderRadius: "10px",
-      },
-      ".input-container.is-focus": {
-        borderColor: "#5c8a8a",
-      },
-      ".input-container.is-error": {
-        borderColor: "#e07070",
-      },
+      ".input-container": { borderColor: "#2a2a2a", borderRadius: "10px" },
+      ".input-container.is-focus": { borderColor: "#5c8a8a" },
+      ".input-container.is-error": { borderColor: "#e07070" },
       ".message-text": { color: "#9a958a" },
       ".message-icon": { color: "#9a958a" },
       ".message-text.is-error": { color: "#e07070" },
@@ -441,7 +485,7 @@
       card = await payments.card({ style: cardStyle });
       await card.attach("#card-container");
     } catch (styleErr) {
-      console.warn("Styled card form failed, falling back to defaults:", styleErr);
+      console.warn("Styled card form failed, falling back:", styleErr);
       try {
         if (card) await card.destroy();
       } catch {
@@ -453,9 +497,7 @@
   }
 
   async function tokenize() {
-    if (!card) {
-      throw new Error("Card form is not ready. Go back and try again.");
-    }
+    if (!card) throw new Error("Card form is not ready. Go back and try again.");
     const result = await card.tokenize();
     if (result.status === "OK") return result.token;
     const detail = result.errors
@@ -470,27 +512,55 @@
       currencyCode: currency || "USD",
       intent: "CHARGE",
       billingContact: {
-        email: emailInput.value.trim() || undefined,
+        email: document.getElementById("ship-email").value.trim() || undefined,
+        givenName: document.getElementById("ship-name").value.trim() || undefined,
       },
     };
     try {
       const verification = await payments.verifyBuyer(token, details);
-      return verification && verification.token ? verification.token : undefined;
+      return verification?.token || undefined;
     } catch (e) {
       console.warn("verifyBuyer skipped:", e);
       return undefined;
     }
   }
 
+  function readShipping() {
+    return {
+      displayName: document.getElementById("ship-name").value.trim(),
+      email: document.getElementById("ship-email").value.trim(),
+      phone: document.getElementById("ship-phone").value.trim(),
+      addressLine1: document.getElementById("ship-line1").value.trim(),
+      addressLine2: document.getElementById("ship-line2").value.trim(),
+      city: document.getElementById("ship-city").value.trim(),
+      state: document.getElementById("ship-state").value.trim().toUpperCase(),
+      postalCode: document.getElementById("ship-postal").value.trim(),
+      country: "US",
+    };
+  }
+
   async function onSubmit(event) {
     event.preventDefault();
     if (!cart.length || !card) return;
 
-    const amount = cartSubtotalCents();
+    const shipping = readShipping();
+    if (
+      !shipping.displayName ||
+      !shipping.email ||
+      !shipping.addressLine1 ||
+      !shipping.city ||
+      !shipping.state ||
+      !shipping.postalCode
+    ) {
+      setStatus("Please fill in all required shipping fields.", "error");
+      return;
+    }
+
+    const amount = cartGrandTotalCents();
     const currency = cartCurrency();
 
     payButton.disabled = true;
-    setStatus("Processing payment…");
+    setStatus("Creating order and processing payment…");
 
     try {
       const sourceId = await tokenize();
@@ -506,7 +576,8 @@
             variationId: l.variationId,
             quantity: l.quantity,
           })),
-          buyerEmail: emailInput.value.trim() || undefined,
+          shippingAddress: shipping,
+          buyerEmail: shipping.email,
         }),
       });
 
@@ -524,15 +595,26 @@
       saveCart();
       renderCartLines();
 
-      setStatus(
-        `Paid ${data.amountLabel} — thank you!${
-          data.receiptUrl ? " Check your email for a receipt." : ""
-        }`,
-        "success"
-      );
+      let msg = `Order placed — ${data.amountLabel} charged. Thank you!`;
+      if (data.orderId) msg += ` Order ${data.orderId.slice(0, 8)}…`;
+      if (data.emailError) {
+        msg += " (Merchant email may need activation — see note below.)";
+      }
+      setStatus(msg, "success");
       payButton.disabled = true;
 
-      setTimeout(() => closeModal(), 2400);
+      // Refresh catalog stock after sale
+      try {
+        const cat = await fetch("/api/catalog").then((r) => r.json());
+        if (cat.products) {
+          indexCatalog(cat.products);
+          renderProducts(cat.products);
+        }
+      } catch {
+        /* ignore */
+      }
+
+      setTimeout(() => closeModal(), 2800);
     } catch (e) {
       console.error(e);
       setStatus(e.message || "Payment failed", "error");
@@ -551,6 +633,7 @@
 
       if (!configRes.ok) throw new Error("Could not load payment config");
       config = await configRes.json();
+      shippingCents = Number(config.shippingCents) || 1000;
 
       if (config.environment !== "production" && envBadge) {
         envBadge.hidden = false;
@@ -563,6 +646,9 @@
         throw new Error(err.error || "Could not load catalog");
       }
       const catalog = await catalogRes.json();
+      if (catalog.shippingCents != null) {
+        shippingCents = Number(catalog.shippingCents) || shippingCents;
+      }
       const products = catalog.products || [];
       indexCatalog(products);
       renderProducts(products);
@@ -574,7 +660,6 @@
     }
   }
 
-  // Events
   document.getElementById("cart-open").addEventListener("click", () => openModal("cart"));
   document.getElementById("checkout-close").addEventListener("click", closeModal);
   document.getElementById("cart-continue-btn").addEventListener("click", closeModal);

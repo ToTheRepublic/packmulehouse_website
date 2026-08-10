@@ -13,9 +13,11 @@
   "vars": {
     "SQUARE_APPLICATION_ID": "sandbox-sq0idb-dvcNz5fkPbzX4fuFaxg57Q",
     "SQUARE_LOCATION_ID": "LKJ4C91RD6JQH",
-    "SQUARE_ENVIRONMENT": "sandbox"
+    "SQUARE_ENVIRONMENT": "sandbox",
+    "SHIPPING_CENTS": "1000",
+    "MERCHANT_NOTIFY_EMAIL": "packmulehouse@gmail.com"
   },
-  // SQUARE_ACCESS_TOKEN is set via: wrangler secret put SQUARE_ACCESS_TOKEN
+  // Secrets: SQUARE_ACCESS_TOKEN (required), RESEND_API_KEY (optional, better email)
   // Local: .dev.vars (gitignored)
   "observability": {
     "enabled": true

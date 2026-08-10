@@ -1,9 +1,11 @@
 /**
  * Pack Mule House — Cloudflare Worker
- * Serves static assets + Square Catalog / Payments API (sandbox or production).
+ * Catalog, cart checkout, Square Orders + Payments, inventory, merchant email.
  */
 
 const SQUARE_VERSION = "2025-01-23";
+const SHIPPING_CENTS = 1000; // $10.00 flat
+const MERCHANT_NOTIFY_EMAIL = "packmulehouse@gmail.com";
 
 function squareBase(env) {
   return env.SQUARE_ENVIRONMENT === "production"
@@ -65,6 +67,26 @@ async function squareFetch(env, path, { method = "GET", body } = {}) {
   return data;
 }
 
+function formatMoney(amountCents, currency = "USD") {
+  try {
+    return new Intl.NumberFormat("en-US", {
+      style: "currency",
+      currency,
+    }).format((amountCents || 0) / 100);
+  } catch {
+    return `$${((amountCents || 0) / 100).toFixed(2)}`;
+  }
+}
+
+function shippingCents(env) {
+  const n = Number(env.SHIPPING_CENTS);
+  return Number.isFinite(n) && n >= 0 ? Math.round(n) : SHIPPING_CENTS;
+}
+
+function notifyEmail(env) {
+  return (env.MERCHANT_NOTIFY_EMAIL || MERCHANT_NOTIFY_EMAIL).trim();
+}
+
 /** Paginate catalog list for ITEM + IMAGE objects. */
 async function listCatalog(env) {
   const objects = [];
@@ -79,18 +101,28 @@ async function listCatalog(env) {
   return objects;
 }
 
-function formatMoney(amountCents, currency = "USD") {
-  try {
-    return new Intl.NumberFormat("en-US", {
-      style: "currency",
-      currency,
-    }).format((amountCents || 0) / 100);
-  } catch {
-    return `$${((amountCents || 0) / 100).toFixed(2)}`;
+async function batchInventoryCounts(env, variationIds) {
+  if (!variationIds.length) return new Map();
+  const data = await squareFetch(env, "/v2/inventory/counts/batch-retrieve", {
+    method: "POST",
+    body: {
+      catalog_object_ids: variationIds,
+      location_ids: [env.SQUARE_LOCATION_ID],
+      states: ["IN_STOCK"],
+    },
+  });
+
+  const map = new Map();
+  for (const c of data.counts || []) {
+    if (c.state !== "IN_STOCK") continue;
+    const id = c.catalog_object_id;
+    const qty = Number(c.quantity || 0);
+    map.set(id, (map.get(id) || 0) + qty);
   }
+  return map;
 }
 
-function mapCatalogToProducts(objects) {
+function mapCatalogToProducts(objects, inventoryMap) {
   const images = new Map();
   for (const o of objects) {
     if (o.type === "IMAGE" && o.image_data?.url) {
@@ -112,17 +144,25 @@ function mapCatalogToProducts(objects) {
       const money = vd.price_money;
       if (!money || money.amount == null) continue;
 
+      const tracks = !!vd.track_inventory;
+      const stock = tracks
+        ? inventoryMap.has(v.id)
+          ? inventoryMap.get(v.id)
+          : 0
+        : null;
+
       variations.push({
         id: v.id,
         name: vd.name || "Standard",
         amount: money.amount,
         currency: money.currency || "USD",
         priceLabel: formatMoney(money.amount, money.currency || "USD"),
+        trackInventory: tracks,
+        stock,
       });
     }
     if (!variations.length) continue;
 
-    // Prefer lowest fixed price as the card price (kits usually have one variation)
     const primary = [...variations].sort((a, b) => a.amount - b.amount)[0];
     const imageId = item.image_ids?.[0];
 
@@ -136,30 +176,55 @@ function mapCatalogToProducts(objects) {
       amount: primary.amount,
       currency: primary.currency,
       defaultVariationId: primary.id,
+      trackInventory: primary.trackInventory,
+      stock: primary.stock,
     });
   }
 
-  // Stable sort: name ascending so cards don't jump around
   products.sort((a, b) => a.name.localeCompare(b.name));
   return products;
 }
 
 async function handleConfig(env) {
+  const ship = shippingCents(env);
   return json({
     applicationId: env.SQUARE_APPLICATION_ID,
     locationId: env.SQUARE_LOCATION_ID,
     environment: env.SQUARE_ENVIRONMENT || "sandbox",
+    shippingCents: ship,
+    shippingLabel: formatMoney(ship, "USD"),
   });
 }
 
 async function handleCatalog(env) {
   const objects = await listCatalog(env);
-  const products = mapCatalogToProducts(objects);
+  const variationIds = [];
+  for (const o of objects) {
+    if (o.type !== "ITEM") continue;
+    for (const v of o.item_data?.variations || []) {
+      if (v.item_variation_data?.track_inventory) {
+        variationIds.push(v.id);
+      }
+    }
+  }
+
+  let inventoryMap = new Map();
+  try {
+    inventoryMap = await batchInventoryCounts(env, variationIds);
+  } catch (e) {
+    console.warn("inventory lookup failed", e.message);
+  }
+
+  const products = mapCatalogToProducts(objects, inventoryMap);
   return json(
-    { products, count: products.length },
+    {
+      products,
+      count: products.length,
+      shippingCents: shippingCents(env),
+      shippingLabel: formatMoney(shippingCents(env), "USD"),
+    },
     200,
-    // short cache so UI is snappy but prices stay fresh enough in sandbox
-    { "Cache-Control": "public, max-age=30" }
+    { "Cache-Control": "public, max-age=15" }
   );
 }
 
@@ -210,6 +275,196 @@ async function resolveVariationLine(env, variationId, quantity) {
     currency: money.currency || "USD",
     lineTotal: money.amount * qty,
     itemName,
+    trackInventory: !!vd.track_inventory,
+  };
+}
+
+function parseAddress(body) {
+  const a = body.shippingAddress || body.address || {};
+  const firstName = String(a.firstName || a.first_name || body.firstName || "").trim();
+  const lastName = String(a.lastName || a.last_name || body.lastName || "").trim();
+  const displayName =
+    String(a.displayName || a.name || "").trim() ||
+    [firstName, lastName].filter(Boolean).join(" ").trim();
+  const email = String(
+    a.email || body.buyerEmail || body.email || ""
+  ).trim();
+  const phone = String(a.phone || a.phoneNumber || body.phone || "").trim();
+  const addressLine1 = String(a.addressLine1 || a.line1 || a.address1 || "").trim();
+  const addressLine2 = String(a.addressLine2 || a.line2 || a.address2 || "").trim();
+  const city = String(a.city || a.locality || "").trim();
+  const state = String(
+    a.state || a.administrativeDistrictLevel1 || a.region || ""
+  ).trim();
+  const postalCode = String(a.postalCode || a.postal || a.zip || "").trim();
+  const country = String(a.country || "US").trim().toUpperCase() || "US";
+
+  const missing = [];
+  if (!displayName) missing.push("name");
+  if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) missing.push("email");
+  if (!addressLine1) missing.push("address");
+  if (!city) missing.push("city");
+  if (!state) missing.push("state");
+  if (!postalCode) missing.push("postal code");
+  if (!country) missing.push("country");
+
+  if (missing.length) {
+    return { error: `Missing or invalid shipping fields: ${missing.join(", ")}` };
+  }
+
+  return {
+    displayName,
+    email,
+    phone: phone || undefined,
+    address: {
+      address_line_1: addressLine1,
+      ...(addressLine2 ? { address_line_2: addressLine2 } : {}),
+      locality: city,
+      administrative_district_level_1: state,
+      postal_code: postalCode,
+      country,
+    },
+  };
+}
+
+async function assertInventory(env, lines) {
+  const tracked = lines.filter((l) => l.trackInventory);
+  if (!tracked.length) return;
+
+  const counts = await batchInventoryCounts(
+    env,
+    tracked.map((l) => l.variationId)
+  );
+
+  const problems = [];
+  for (const line of tracked) {
+    const available = counts.has(line.variationId)
+      ? counts.get(line.variationId)
+      : 0;
+    if (available < line.quantity) {
+      problems.push(
+        `${line.itemName}: need ${line.quantity}, only ${available} in stock`
+      );
+    }
+  }
+
+  if (problems.length) {
+    const err = new Error(`Insufficient inventory — ${problems.join("; ")}`);
+    err.status = 409;
+    throw err;
+  }
+}
+
+/**
+ * Notify merchant. Prefer Resend if RESEND_API_KEY is set; otherwise FormSubmit (Gmail).
+ */
+async function sendMerchantEmail(env, payload) {
+  const to = notifyEmail(env);
+  const subject = payload.subject;
+  const text = payload.text;
+  const html = payload.html || `<pre style="font-family:sans-serif;white-space:pre-wrap">${escapeHtml(text)}</pre>`;
+
+  console.log("ORDER_EMAIL", { to, subject, text });
+
+  if (env.RESEND_API_KEY) {
+    const from =
+      env.EMAIL_FROM || "Pack Mule House <onboarding@resend.dev>";
+    const res = await fetch("https://api.resend.com/emails", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${env.RESEND_API_KEY}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        from,
+        to: [to],
+        subject,
+        text,
+        html,
+      }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      console.error("Resend failed", data);
+      throw new Error(data?.message || "Email send failed (Resend)");
+    }
+    return { provider: "resend", id: data.id };
+  }
+
+  // FormSubmit — first send may require clicking a confirmation email at packmulehouse@gmail.com
+  const res = await fetch(`https://formsubmit.co/ajax/${encodeURIComponent(to)}`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Accept: "application/json",
+    },
+    body: JSON.stringify({
+      name: "Pack Mule House Website",
+      email: payload.replyTo || "noreply@packmulehouse.com",
+      _subject: subject,
+      _template: "table",
+      message: text,
+    }),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    console.error("FormSubmit failed", data);
+    throw new Error(data?.message || "Email send failed");
+  }
+  return { provider: "formsubmit", data };
+}
+
+function escapeHtml(s) {
+  return String(s)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
+function buildOrderEmail({ lines, shipping, total, currency, shippingInfo, orderId, paymentId, environment }) {
+  const itemLines = lines
+    .map(
+      (l) =>
+        `  • ${l.itemName} × ${l.quantity} — ${formatMoney(l.lineTotal, currency)}`
+    )
+    .join("\n");
+
+  const addr = shippingInfo.address;
+  const addressBlock = [
+    shippingInfo.displayName,
+    addr.address_line_1,
+    addr.address_line_2,
+    `${addr.locality}, ${addr.administrative_district_level_1} ${addr.postal_code}`,
+    addr.country,
+    shippingInfo.email,
+    shippingInfo.phone,
+  ]
+    .filter(Boolean)
+    .join("\n");
+
+  const text = [
+    `New Pack Mule House web order (${environment || "sandbox"})`,
+    "",
+    `Order ID: ${orderId || "—"}`,
+    `Payment ID: ${paymentId || "—"}`,
+    "",
+    "Items:",
+    itemLines,
+    "",
+    `Shipping: ${formatMoney(shipping, currency)} (flat rate)`,
+    `Total charged: ${formatMoney(total, currency)}`,
+    "",
+    "Ship to:",
+    addressBlock,
+    "",
+    "Fulfill this order in Square Dashboard → Orders.",
+  ].join("\n");
+
+  return {
+    subject: `[PMH] New order ${formatMoney(total, currency)} — ${shippingInfo.displayName}`,
+    text,
+    replyTo: shippingInfo.email,
   };
 }
 
@@ -226,28 +481,26 @@ async function handlePay(request, env) {
   }
 
   const sourceId = body.sourceId || body.source_id;
-  const buyerEmail = (body.buyerEmail || body.email || "").trim() || undefined;
   const verificationToken = body.verificationToken || body.verification_token;
 
-  // Cart: { items: [{ variationId, quantity }] }
-  // Legacy single-item: { variationId, quantity }
   let rawItems = Array.isArray(body.items) ? body.items : null;
-  if (!rawItems || !rawItems.length) {
-    if (body.variationId || body.variation_id) {
-      rawItems = [
-        {
-          variationId: body.variationId || body.variation_id,
-          quantity: body.quantity || 1,
-        },
-      ];
-    }
+  if (!rawItems?.length && (body.variationId || body.variation_id)) {
+    rawItems = [
+      {
+        variationId: body.variationId || body.variation_id,
+        quantity: body.quantity || 1,
+      },
+    ];
   }
 
   if (!sourceId) return error("Missing sourceId (card token)");
   if (!rawItems?.length) return error("Cart is empty");
   if (rawItems.length > 25) return error("Too many line items");
 
-  // Never trust client price — look up each catalog variation
+  const shippingInfo = parseAddress(body);
+  if (shippingInfo.error) return error(shippingInfo.error);
+
+  // Resolve catalog prices (never trust client)
   const lines = [];
   try {
     for (const line of rawItems) {
@@ -270,58 +523,174 @@ async function handlePay(request, env) {
     }
   }
 
-  const totalAmount = lines.reduce((sum, line) => sum + line.lineTotal, 0);
-  if (totalAmount <= 0) return error("Invalid cart total");
-
-  const noteParts = lines.map((l) => `${l.itemName} × ${l.quantity}`);
-  const note = `Pack Mule House web · ${noteParts.join("; ")}`.slice(0, 500);
-
-  const paymentBody = {
-    source_id: sourceId,
-    idempotency_key: crypto.randomUUID(),
-    amount_money: {
-      amount: totalAmount,
-      currency,
-    },
-    location_id: env.SQUARE_LOCATION_ID,
-    autocomplete: true,
-    note,
-  };
-
-  if (buyerEmail) {
-    paymentBody.buyer_email_address = buyerEmail;
-  }
-  if (verificationToken) {
-    paymentBody.verification_token = verificationToken;
-  }
-
   try {
-    const result = await squareFetch(env, "/v2/payments", {
+    await assertInventory(env, lines);
+  } catch (e) {
+    return error(e.message, e.status || 409, e.details);
+  }
+
+  const subtotal = lines.reduce((sum, line) => sum + line.lineTotal, 0);
+  const shipping = shippingCents(env);
+  if (subtotal <= 0) return error("Invalid cart total");
+
+  // 1) Create Square Order with catalog line items + shipping + shipment fulfillment
+  let order;
+  try {
+    const orderBody = {
+      idempotency_key: crypto.randomUUID(),
+      order: {
+        location_id: env.SQUARE_LOCATION_ID,
+        reference_id: `web-${Date.now()}`,
+        customer_id: undefined,
+        line_items: lines.map((l) => ({
+          quantity: String(l.quantity),
+          catalog_object_id: l.variationId,
+        })),
+        service_charges: [
+          {
+            name: "Flat rate shipping",
+            amount_money: { amount: shipping, currency },
+            calculation_phase: "TOTAL_PHASE",
+            taxable: false,
+          },
+        ],
+        fulfillments: [
+          {
+            type: "SHIPMENT",
+            state: "PROPOSED",
+            shipment_details: {
+              recipient: {
+                display_name: shippingInfo.displayName,
+                email_address: shippingInfo.email,
+                ...(shippingInfo.phone
+                  ? { phone_number: shippingInfo.phone }
+                  : {}),
+                address: shippingInfo.address,
+              },
+            },
+          },
+        ],
+        metadata: {
+          source: "packmulehouse-website",
+          channel: "custom_web",
+        },
+      },
+    };
+
+    // Remove undefined customer_id
+    delete orderBody.order.customer_id;
+
+    const created = await squareFetch(env, "/v2/orders", {
+      method: "POST",
+      body: orderBody,
+    });
+    order = created.order;
+  } catch (e) {
+    console.error("CreateOrder failed", e.details || e.message);
+    return error(
+      e.message || "Could not create Square order",
+      e.status || 502,
+      e.details
+    );
+  }
+
+  const orderTotal = order.total_money?.amount;
+  if (orderTotal == null) {
+    return error("Square order missing total", 502);
+  }
+
+  // 2) Pay the order
+  let payment;
+  try {
+    const paymentBody = {
+      source_id: sourceId,
+      idempotency_key: crypto.randomUUID(),
+      amount_money: {
+        amount: orderTotal,
+        currency: order.total_money.currency || currency,
+      },
+      order_id: order.id,
+      location_id: env.SQUARE_LOCATION_ID,
+      autocomplete: true,
+      buyer_email_address: shippingInfo.email,
+      note: `Pack Mule House web order ${order.id}`,
+    };
+    if (verificationToken) {
+      paymentBody.verification_token = verificationToken;
+    }
+
+    const paid = await squareFetch(env, "/v2/payments", {
       method: "POST",
       body: paymentBody,
     });
-
-    const payment = result.payment;
-    return json({
-      ok: true,
-      paymentId: payment?.id,
-      status: payment?.status,
-      receiptUrl: payment?.receipt_url || null,
-      amount: totalAmount,
-      currency,
-      amountLabel: formatMoney(totalAmount, currency),
-      items: lines.map((l) => ({
-        variationId: l.variationId,
-        itemName: l.itemName,
-        quantity: l.quantity,
-        lineTotal: l.lineTotal,
-        lineTotalLabel: formatMoney(l.lineTotal, l.currency),
-      })),
-      itemCount: lines.reduce((n, l) => n + l.quantity, 0),
-    });
+    payment = paid.payment;
   } catch (e) {
+    console.error("Pay order failed", e.details || e.message);
+    // Best-effort: cancel open order so it doesn't hang unpaid
+    try {
+      await squareFetch(env, `/v2/orders/${order.id}`, {
+        method: "PUT",
+        body: {
+          order: {
+            version: order.version,
+            state: "CANCELED",
+            location_id: env.SQUARE_LOCATION_ID,
+          },
+          idempotency_key: crypto.randomUUID(),
+        },
+      });
+    } catch (cancelErr) {
+      console.warn("Could not cancel unpaid order", cancelErr.message);
+    }
     return error(e.message || "Payment failed", e.status || 502, e.details);
   }
+
+  // 3) Merchant email (non-fatal if email provider fails)
+  let emailResult = null;
+  let emailError = null;
+  try {
+    const mail = buildOrderEmail({
+      lines,
+      shipping,
+      total: orderTotal,
+      currency: order.total_money.currency || currency,
+      shippingInfo,
+      orderId: order.id,
+      paymentId: payment?.id,
+      environment: env.SQUARE_ENVIRONMENT || "sandbox",
+    });
+    emailResult = await sendMerchantEmail(env, mail);
+  } catch (e) {
+    emailError = e.message;
+    console.error("Merchant email failed", e);
+  }
+
+  return json({
+    ok: true,
+    orderId: order.id,
+    paymentId: payment?.id,
+    status: payment?.status,
+    receiptUrl: payment?.receipt_url || null,
+    subtotal,
+    shipping,
+    amount: orderTotal,
+    currency: order.total_money.currency || currency,
+    amountLabel: formatMoney(
+      orderTotal,
+      order.total_money.currency || currency
+    ),
+    shippingLabel: formatMoney(shipping, currency),
+    items: lines.map((l) => ({
+      variationId: l.variationId,
+      itemName: l.itemName,
+      quantity: l.quantity,
+      lineTotal: l.lineTotal,
+      lineTotalLabel: formatMoney(l.lineTotal, l.currency),
+    })),
+    itemCount: lines.reduce((n, l) => n + l.quantity, 0),
+    emailSent: !!emailResult && !emailError,
+    emailError: emailError || undefined,
+  });
 }
 
 function isHtmlOrScript(pathname) {
@@ -341,7 +710,6 @@ async function serveAsset(request, env) {
   const res = await env.ASSETS.fetch(request);
   const url = new URL(request.url);
 
-  // During sandbox polish, avoid sticky HTML/JS edge caches after deploys
   if (isHtmlOrScript(url.pathname) && res.status === 200) {
     const headers = new Headers(res.headers);
     headers.set("Cache-Control", "no-cache, must-revalidate");
