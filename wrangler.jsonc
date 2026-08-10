@@ -1,0 +1,13 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  // Pack Mule House static site (Workers Static Assets)
+  "name": "packmulehouse-website",
+  "compatibility_date": "2026-08-10",
+  // Only files under public/ are uploaded and served
+  "assets": {
+    "directory": "./public"
+  },
+  "observability": {
+    "enabled": true
+  }
+}

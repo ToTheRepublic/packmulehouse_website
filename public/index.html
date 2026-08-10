@@ -1,0 +1,682 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>X-Frame | Pack Mule House</title>
+  <meta name="description" content="X-Frame magnetic picture hanging system. Modular, damage-free mounts for frames and wall decor. Designed and 3D printed by Pack Mule House." />
+  <link rel="icon" href="logo.png" type="image/jpeg" />
+
+  <!-- Preconnect for performance -->
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet" />
+
+  <style>
+    :root {
+      /* Dark base complementary to the logo */
+      --bg: #0b0b0b;
+      --bg-elevated: #141414;
+      --surface: #1c1c1c;
+      --border: #2a2a2a;
+
+      /* Logo-derived accents */
+      --teal: #5c8a8a;          /* from the oval */
+      --teal-bright: #6fa0a0;
+      --tan: #c4a574;           /* backpack / warm accent */
+      --tan-dim: #a68b5b;
+      --brown: #8b6b4a;         /* horse tones */
+
+      /* Text */
+      --text: #eae6dc;
+      --text-muted: #9a958a;
+      --text-dim: #6b675f;
+
+      /* Spacing & radius */
+      --radius: 12px;
+      --radius-lg: 20px;
+      --max-width: 1120px;
+    }
+
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    html {
+      scroll-behavior: smooth;
+    }
+
+    body {
+      font-family: 'Inter', system-ui, -apple-system, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.6;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    a {
+      color: inherit;
+      text-decoration: none;
+    }
+
+    img {
+      max-width: 100%;
+      display: block;
+    }
+
+    /* ========== HEADER ========== */
+    .header {
+      position: sticky;
+      top: 0;
+      z-index: 100;
+      background: rgba(11, 11, 11, 0.85);
+      backdrop-filter: blur(12px);
+      border-bottom: 1px solid var(--border);
+    }
+
+    .header-inner {
+      max-width: var(--max-width);
+      margin: 0 auto;
+      padding: 0.85rem 1.5rem;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 1.5rem;
+    }
+
+    .logo-link {
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+    }
+
+    .logo-img {
+      width: 48px;
+      height: 48px;
+      border-radius: 50%;
+      object-fit: cover;
+      border: 2px solid var(--teal);
+    }
+
+    .logo-text {
+      font-family: 'Space Grotesk', sans-serif;
+      font-weight: 600;
+      font-size: 1.15rem;
+      letter-spacing: -0.02em;
+    }
+
+    .logo-text span {
+      color: var(--tan);
+    }
+
+    .nav {
+      display: flex;
+      align-items: center;
+      gap: 1.75rem;
+    }
+
+    .nav a {
+      font-size: 0.95rem;
+      font-weight: 500;
+      color: var(--text-muted);
+      transition: color 0.2s;
+    }
+
+    .nav a:hover {
+      color: var(--text);
+    }
+
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 0.4rem;
+      padding: 0.7rem 1.35rem;
+      border-radius: 999px;
+      font-weight: 600;
+      font-size: 0.95rem;
+      transition: all 0.2s ease;
+      border: none;
+      cursor: pointer;
+    }
+
+    .btn-primary {
+      background: var(--tan);
+      color: #1a140c;
+    }
+
+    .btn-primary:hover {
+      background: #d4b484;
+      transform: translateY(-1px);
+    }
+
+    .btn-outline {
+      background: transparent;
+      color: var(--text);
+      border: 1px solid var(--border);
+    }
+
+    .btn-outline:hover {
+      border-color: var(--teal);
+      color: var(--teal-bright);
+    }
+
+    /* ========== HERO ========== */
+    .hero {
+      max-width: var(--max-width);
+      margin: 0 auto;
+      padding: 4.5rem 1.5rem 3.5rem;
+      display: grid;
+      grid-template-columns: 1.1fr 0.9fr;
+      gap: 3.5rem;
+      align-items: center;
+    }
+
+    .hero-content h1 {
+      font-family: 'Space Grotesk', sans-serif;
+      font-size: clamp(2.4rem, 5vw, 3.4rem);
+      font-weight: 700;
+      line-height: 1.15;
+      letter-spacing: -0.03em;
+      margin-bottom: 1.25rem;
+    }
+
+    .hero-content h1 .accent {
+      color: var(--tan);
+    }
+
+    .hero-content p {
+      font-size: 1.15rem;
+      color: var(--text-muted);
+      max-width: 34ch;
+      margin-bottom: 2rem;
+    }
+
+    .hero-ctas {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.9rem;
+    }
+
+    .hero-visual {
+      position: relative;
+    }
+
+    .hero-logo {
+      width: 100%;
+      max-width: 420px;
+      margin: 0 auto;
+      border-radius: var(--radius-lg);
+      box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.6);
+      border: 1px solid var(--border);
+    }
+
+    /* ========== VIDEO SECTION ========== */
+    .video-section {
+      background: var(--bg-elevated);
+      border-top: 1px solid var(--border);
+      border-bottom: 1px solid var(--border);
+      padding: 3.5rem 1.5rem;
+    }
+
+    .video-inner {
+      max-width: var(--max-width);
+      margin: 0 auto;
+    }
+
+    .section-label {
+      font-size: 0.8rem;
+      font-weight: 600;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: var(--teal);
+      margin-bottom: 0.75rem;
+    }
+
+    .video-section h2 {
+      font-family: 'Space Grotesk', sans-serif;
+      font-size: 1.75rem;
+      font-weight: 600;
+      margin-bottom: 1.75rem;
+    }
+
+    .video-wrapper {
+      position: relative;
+      width: 100%;
+      padding-bottom: 56.25%; /* 16:9 */
+      border-radius: var(--radius-lg);
+      overflow: hidden;
+      background: #000;
+      box-shadow: 0 20px 40px -15px rgba(0, 0, 0, 0.5);
+      border: 1px solid var(--border);
+    }
+
+    .video-wrapper iframe {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      border: 0;
+    }
+
+    /* ========== FEATURED PRODUCTS ========== */
+    .products {
+      max-width: var(--max-width);
+      margin: 0 auto;
+      padding: 4.5rem 1.5rem;
+    }
+
+    .products-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-end;
+      margin-bottom: 2.5rem;
+      gap: 1rem;
+    }
+
+    .products-header h2 {
+      font-family: 'Space Grotesk', sans-serif;
+      font-size: 1.9rem;
+      font-weight: 600;
+    }
+
+    .product-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+      gap: 1.5rem;
+    }
+
+    .product-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      overflow: hidden;
+      transition: border-color 0.2s, transform 0.2s;
+    }
+
+    .product-card:hover {
+      border-color: var(--teal);
+      transform: translateY(-3px);
+    }
+
+    .product-image {
+      aspect-ratio: 1 / 1;
+      background: linear-gradient(145deg, #1f1f1f, #151515);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: var(--text-dim);
+      font-size: 0.9rem;
+    }
+
+    .product-body {
+      padding: 1.25rem;
+    }
+
+    .product-body h3 {
+      font-size: 1.05rem;
+      font-weight: 600;
+      margin-bottom: 0.35rem;
+    }
+
+    .product-body p {
+      font-size: 0.9rem;
+      color: var(--text-muted);
+      margin-bottom: 1rem;
+    }
+
+    .product-price {
+      font-weight: 600;
+      color: var(--tan);
+      font-size: 1.1rem;
+    }
+
+    /* ========== BENEFITS ========== */
+    .benefits {
+      background: var(--bg-elevated);
+      border-top: 1px solid var(--border);
+      padding: 4.5rem 1.5rem;
+    }
+
+    .benefits-inner {
+      max-width: var(--max-width);
+      margin: 0 auto;
+    }
+
+    .benefits h2 {
+      font-family: 'Space Grotesk', sans-serif;
+      font-size: 1.9rem;
+      font-weight: 600;
+      margin-bottom: 2.5rem;
+      text-align: center;
+    }
+
+    .benefits-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 1.75rem;
+    }
+
+    .benefit-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 1.75rem;
+      text-align: center;
+    }
+
+    .benefit-icon {
+      width: 48px;
+      height: 48px;
+      margin: 0 auto 1.1rem;
+      background: rgba(92, 138, 138, 0.15);
+      border-radius: 12px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 1.4rem;
+      color: var(--teal-bright);
+    }
+
+    .benefit-card h3 {
+      font-size: 1.1rem;
+      font-weight: 600;
+      margin-bottom: 0.5rem;
+    }
+
+    .benefit-card p {
+      font-size: 0.95rem;
+      color: var(--text-muted);
+    }
+
+    /* ========== CTA BANNER ========== */
+    .cta-banner {
+      max-width: var(--max-width);
+      margin: 0 auto;
+      padding: 4rem 1.5rem;
+      text-align: center;
+    }
+
+    .cta-banner h2 {
+      font-family: 'Space Grotesk', sans-serif;
+      font-size: 2rem;
+      font-weight: 600;
+      margin-bottom: 0.75rem;
+    }
+
+    .cta-banner p {
+      color: var(--text-muted);
+      margin-bottom: 1.75rem;
+      max-width: 42ch;
+      margin-left: auto;
+      margin-right: auto;
+    }
+
+    /* ========== FOOTER ========== */
+    .footer {
+      border-top: 1px solid var(--border);
+      padding: 2.5rem 1.5rem;
+      background: var(--bg);
+    }
+
+    .footer-inner {
+      max-width: var(--max-width);
+      margin: 0 auto;
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: space-between;
+      gap: 1.5rem;
+      align-items: center;
+    }
+
+    .footer-brand {
+      display: flex;
+      align-items: center;
+      gap: 0.7rem;
+    }
+
+    .footer-brand img {
+      width: 36px;
+      height: 36px;
+      border-radius: 50%;
+      border: 1px solid var(--border);
+    }
+
+    .footer-brand span {
+      font-family: 'Space Grotesk', sans-serif;
+      font-weight: 600;
+      font-size: 0.95rem;
+    }
+
+    .footer-meta {
+      font-size: 0.85rem;
+      color: var(--text-dim);
+    }
+
+    .footer-links {
+      display: flex;
+      gap: 1.5rem;
+    }
+
+    .footer-links a {
+      font-size: 0.9rem;
+      color: var(--text-muted);
+    }
+
+    .footer-links a:hover {
+      color: var(--tan);
+    }
+
+    /* ========== RESPONSIVE ========== */
+    @media (max-width: 860px) {
+      .hero {
+        grid-template-columns: 1fr;
+        padding-top: 3rem;
+        text-align: center;
+      }
+
+      .hero-content p {
+        margin-left: auto;
+        margin-right: auto;
+      }
+
+      .hero-ctas {
+        justify-content: center;
+      }
+
+      .hero-visual {
+        order: -1;
+      }
+
+      .hero-logo {
+        max-width: 280px;
+      }
+
+      .benefits-grid {
+        grid-template-columns: 1fr;
+      }
+
+      .nav {
+        display: none; /* simple mobile for v1 – can expand later */
+      }
+    }
+
+    @media (max-width: 480px) {
+      .header-inner {
+        padding: 0.7rem 1rem;
+      }
+
+      .logo-text {
+        font-size: 1rem;
+      }
+    }
+  </style>
+</head>
+<body>
+
+  <!-- HEADER -->
+  <header class="header">
+    <div class="header-inner">
+      <a href="/" class="logo-link">
+        <img src="logo.png" alt="Pack Mule House" class="logo-img" />
+        <div class="logo-text">Pack Mule <span>House</span></div>
+      </a>
+
+      <nav class="nav">
+        <a href="#products">Shop</a>
+        <a href="#how-it-works">How it Works</a>
+        <a href="#about">About</a>
+        <a href="https://packmulehouse.com" class="btn btn-primary" target="_blank" rel="noopener">Buy on Square</a>
+      </nav>
+    </div>
+  </header>
+
+  <!-- HERO -->
+  <section class="hero">
+    <div class="hero-content">
+      <h1>Mount your frames.<br /><span class="accent">No damage.</span> No hassle.</h1>
+      <p>
+        X-Frame is a modular magnetic hanging system for pictures and wall decor.
+        Designed and 3D-printed for strength, simplicity, and clean walls.
+      </p>
+      <div class="hero-ctas">
+        <a href="#products" class="btn btn-primary">Shop X-Frame</a>
+        <a href="#video" class="btn btn-outline">Watch Demo</a>
+      </div>
+    </div>
+    <div class="hero-visual">
+      <img src="logo.png" alt="Pack Mule House logo" class="hero-logo" />
+    </div>
+  </section>
+
+  <!-- VIDEO -->
+  <section class="video-section" id="video">
+    <div class="video-inner">
+      <div class="section-label">See it in action</div>
+      <h2>X-Frame Drop-In System</h2>
+
+      <div class="video-wrapper">
+        <!-- 
+          Autoplay requires muted. 
+          Replace the video ID if you want a different clip.
+          Current: X-Frame — Drop-In Frame Mounting System
+        -->
+        <iframe
+          src="https://www.youtube.com/embed/5uQ2c1h6dxc?autoplay=1&mute=1&loop=1&playlist=5uQ2c1h6dxc&playsinline=1&rel=0&modestbranding=1&controls=1"
+          title="X-Frame Drop-In Frame Mounting System"
+          allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+          allowfullscreen
+          loading="lazy"
+        ></iframe>
+      </div>
+    </div>
+  </section>
+
+  <!-- PRODUCTS -->
+  <section class="products" id="products">
+    <div class="products-header">
+      <div>
+        <div class="section-label">The collection</div>
+        <h2>X-Frame Kits</h2>
+      </div>
+      <a href="https://packmulehouse.com" class="btn btn-outline" target="_blank" rel="noopener">View all on Square →</a>
+    </div>
+
+    <div class="product-grid">
+      <!-- These are placeholders. Later we can deep-link to specific Square items or pull catalog. -->
+      <article class="product-card">
+        <div class="product-image">4×6 Kit</div>
+        <div class="product-body">
+          <h3>X-Frame 4×6</h3>
+          <p>Compact kit for smaller frames and photos. Magnetic + interlocking.</p>
+          <div class="product-price">See price on Square</div>
+        </div>
+      </article>
+
+      <article class="product-card">
+        <div class="product-image">5×7 Kit</div>
+        <div class="product-body">
+          <h3>X-Frame 5×7</h3>
+          <p>Most popular size. Clean wall mounting with strong hold.</p>
+          <div class="product-price">See price on Square</div>
+        </div>
+      </article>
+
+      <article class="product-card">
+        <div class="product-image">8×10 Kit</div>
+        <div class="product-body">
+          <h3>X-Frame 8×10</h3>
+          <p>Larger format for statement pieces and gallery walls.</p>
+          <div class="product-price">See price on Square</div>
+        </div>
+      </article>
+
+      <article class="product-card">
+        <div class="product-image">Wall Mount</div>
+        <div class="product-body">
+          <h3>Magnetic Wall Mounts</h3>
+          <p>Screw or Command-strip options. Reusable and damage-free.</p>
+          <div class="product-price">See price on Square</div>
+        </div>
+      </article>
+    </div>
+  </section>
+
+  <!-- BENEFITS / HOW IT WORKS -->
+  <section class="benefits" id="how-it-works">
+    <div class="benefits-inner">
+      <h2>Why X-Frame?</h2>
+      <div class="benefits-grid">
+        <div class="benefit-card">
+          <div class="benefit-icon">🧲</div>
+          <h3>Magnetic + Interlocking</h3>
+          <p>Strong hold with clean alignment. Swap art in seconds without tools.</p>
+        </div>
+        <div class="benefit-card">
+          <div class="benefit-icon">🖼️</div>
+          <h3>Damage-Free Options</h3>
+          <p>Use screws for permanence or Command strips for rentals and temporary displays.</p>
+        </div>
+        <div class="benefit-card">
+          <div class="benefit-icon">🖨️</div>
+          <h3>Designed & Printed Here</h3>
+          <p>In-house 3D printed for durability and tight tolerances. Built by makers, for makers.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- FINAL CTA -->
+  <section class="cta-banner" id="about">
+    <h2>Ready to upgrade your walls?</h2>
+    <p>
+      Pack Mule House is a small Wyoming-based maker shop. Every X-Frame kit is designed and produced with care.
+      Shop securely through Square — in person or online.
+    </p>
+    <a href="https://packmulehouse.com" class="btn btn-primary" target="_blank" rel="noopener">
+      Shop on Square
+    </a>
+  </section>
+
+  <!-- FOOTER -->
+  <footer class="footer">
+    <div class="footer-inner">
+      <div class="footer-brand">
+        <img src="logo.png" alt="Pack Mule House" />
+        <span>Pack Mule House</span>
+      </div>
+      <div class="footer-meta">
+        EST. 2025 · Thermopolis, Wyoming
+      </div>
+      <div class="footer-links">
+        <a href="https://packmulehouse.com" target="_blank" rel="noopener">Square Store</a>
+        <a href="https://www.youtube.com/@PackMuleHouse" target="_blank" rel="noopener">YouTube</a>
+      </div>
+    </div>
+  </footer>
+
+</body>
+</html>
