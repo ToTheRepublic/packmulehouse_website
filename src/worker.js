@@ -391,25 +391,36 @@ async function sendMerchantEmail(env, payload) {
     return { provider: "resend", id: data.id };
   }
 
-  // FormSubmit — first send may require clicking a confirmation email at packmulehouse@gmail.com
+  // FormSubmit — first request emails packmulehouse@gmail.com an "Activate Form" link.
+  // After you click it once, order notifications are delivered. Origin headers required.
+  const siteOrigin =
+    env.SITE_ORIGIN ||
+    "https://packmulehouse-website.philip-michael-howard.workers.dev";
   const res = await fetch(`https://formsubmit.co/ajax/${encodeURIComponent(to)}`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
       Accept: "application/json",
+      Origin: siteOrigin,
+      Referer: `${siteOrigin}/`,
     },
     body: JSON.stringify({
       name: "Pack Mule House Website",
-      email: payload.replyTo || "noreply@packmulehouse.com",
+      email: payload.replyTo || "orders@packmulehouse.com",
       _subject: subject,
       _template: "table",
+      _captcha: "false",
       message: text,
     }),
   });
   const data = await res.json().catch(() => ({}));
-  if (!res.ok) {
+  // FormSubmit returns success as string "false" until activated
+  if (!res.ok || data.success === "false" || data.success === false) {
     console.error("FormSubmit failed", data);
-    throw new Error(data?.message || "Email send failed");
+    const msg =
+      data?.message ||
+      "Email send failed — check packmulehouse@gmail.com for a FormSubmit activation link";
+    throw new Error(msg);
   }
   return { provider: "formsubmit", data };
 }
