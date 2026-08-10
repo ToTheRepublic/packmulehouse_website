@@ -263,14 +263,54 @@
       price.className = "product-price";
       price.textContent = p.priceLabel;
 
+      const actions = document.createElement("div");
+      actions.className = "product-actions";
+
+      // Per-product quantity picker
+      let pickQty = 1;
+      const maxQty =
+        variation?.trackInventory && variation.stock != null
+          ? Math.min(20, Math.max(1, variation.stock))
+          : 20;
+
+      const qty = document.createElement("div");
+      qty.className = "qty-controls";
+      qty.setAttribute("aria-label", `Quantity for ${p.name}`);
+
+      const qtyLabel = document.createElement("span");
+      qtyLabel.textContent = "1";
+
+      const minus = document.createElement("button");
+      minus.type = "button";
+      minus.setAttribute("aria-label", "Decrease quantity");
+      minus.textContent = "−";
+      minus.disabled = !!outOfStock;
+      minus.addEventListener("click", () => {
+        pickQty = Math.max(1, pickQty - 1);
+        qtyLabel.textContent = String(pickQty);
+      });
+
+      const plus = document.createElement("button");
+      plus.type = "button";
+      plus.setAttribute("aria-label", "Increase quantity");
+      plus.textContent = "+";
+      plus.disabled = !!outOfStock;
+      plus.addEventListener("click", () => {
+        pickQty = Math.min(maxQty, pickQty + 1);
+        qtyLabel.textContent = String(pickQty);
+      });
+
+      qty.append(minus, qtyLabel, plus);
+
       const btn = document.createElement("button");
       btn.type = "button";
       btn.className = "btn btn-primary btn-sm";
       btn.textContent = outOfStock ? "Out of stock" : "Add to cart";
       btn.disabled = !!outOfStock;
-      btn.addEventListener("click", () => addToCart(p, 1));
+      btn.addEventListener("click", () => addToCart(p, pickQty));
 
-      footer.append(price, btn);
+      actions.append(qty, btn);
+      footer.append(price, actions);
       body.append(h3, desc, footer);
 
       if (variation?.trackInventory && variation.stock != null) {
@@ -669,11 +709,16 @@
     showPayStep();
   });
   form.addEventListener("submit", onSubmit);
-  modal.addEventListener("click", (e) => {
-    if (e.target === modal) closeModal();
-  });
+
+  // Don't close on outside click — too easy to lose checkout progress.
+  // Escape: step back from payment → cart; only close fully from the cart view.
   document.addEventListener("keydown", (e) => {
-    if (e.key === "Escape" && modal.classList.contains("open")) closeModal();
+    if (e.key !== "Escape" || !modal.classList.contains("open")) return;
+    if (panelPay && !panelPay.hidden) {
+      showCartStep();
+      return;
+    }
+    closeModal();
   });
 
   if (document.readyState === "loading") {
