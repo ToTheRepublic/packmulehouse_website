@@ -123,55 +123,7 @@ function taxConfigPublic(env) {
   };
 }
 
-/**
- * Parse VOLUME_DISCOUNT_TIERS env like "3:5,5:10,10:15"
- * → [{ minItems: 3, percent: 5 }, ...] sorted by minItems ascending.
- */
-function parseVolumeDiscountTiers(env) {
-  const raw = (env.VOLUME_DISCOUNT_TIERS || "3:5,5:10,10:15").trim();
-  if (!raw || raw === "none" || raw === "off") return [];
-  const tiers = [];
-  for (const part of raw.split(",")) {
-    const [minS, pctS] = part.trim().split(":");
-    const minItems = Number(minS);
-    const percent = Number(pctS);
-    if (
-      Number.isFinite(minItems) &&
-      minItems >= 1 &&
-      Number.isFinite(percent) &&
-      percent > 0
-    ) {
-      tiers.push({ minItems: Math.round(minItems), percent });
-    }
-  }
-  tiers.sort((a, b) => a.minItems - b.minItems);
-  return tiers;
-}
-
-/** Best volume tier for total unit count (null if none). */
-function volumeDiscountForCount(env, itemCount) {
-  const tiers = parseVolumeDiscountTiers(env);
-  let best = null;
-  for (const t of tiers) {
-    if (itemCount >= t.minItems) best = t;
-  }
-  if (!best) return null;
-  return {
-    minItems: best.minItems,
-    percent: best.percent,
-    name: `Volume discount (${best.minItems}+ items)`,
-    label: `${best.percent}% off`,
-  };
-}
-
-function estimateDiscountCents(env, subtotalCents, itemCount) {
-  const tier = volumeDiscountForCount(env, itemCount);
-  if (!tier || subtotalCents <= 0) return { cents: 0, tier: null };
-  const cents = Math.round((subtotalCents * tier.percent) / 100);
-  return { cents, tier };
-}
-
-/** Tax after merchandise discount (shipping optionally in base). */
+/** Tax estimate when Square discount amount is known (or 0). */
 function estimateTaxCents(env, subtotalCents, shippingCentsAmt, discountCents = 0) {
   const pct = taxPercent(env);
   if (pct <= 0) return 0;
@@ -180,15 +132,61 @@ function estimateTaxCents(env, subtotalCents, shippingCentsAmt, discountCents = 
   return Math.round((base * pct) / 100);
 }
 
-function discountConfigPublic(env) {
-  const tiers = parseVolumeDiscountTiers(env);
-  return {
-    tiers,
-    // Human-readable for the storefront
-    summary: tiers.length
-      ? tiers.map((t) => `${t.minItems}+ items: ${t.percent}% off`).join(" · ")
-      : "None",
-  };
+/** List active catalog discounts for display (manage in Square). */
+async function listCatalogDiscounts(env) {
+  try {
+    const data = await squareFetch(
+      env,
+      "/v2/catalog/list?types=DISCOUNT,PRICING_RULE,PRODUCT_SET"
+    );
+    const objects = data.objects || [];
+    const discounts = new Map();
+    const rules = [];
+    const productSets = new Map();
+    for (const o of objects) {
+      if (o.type === "DISCOUNT" && !o.is_deleted) {
+        discounts.set(o.id, o);
+      } else if (o.type === "PRICING_RULE" && !o.is_deleted) {
+        rules.push(o);
+      } else if (o.type === "PRODUCT_SET" && !o.is_deleted) {
+        productSets.set(o.id, o);
+      }
+    }
+    const promos = [];
+    for (const rule of rules) {
+      const rd = rule.pricing_rule_data || {};
+      if (rd.application_mode && rd.application_mode !== "AUTOMATIC") continue;
+      const disc = discounts.get(rd.discount_id);
+      if (!disc) continue;
+      const dd = disc.discount_data || {};
+      const pset = productSets.get(rd.match_products_id);
+      const qmin = pset?.product_set_data?.quantity_min;
+      promos.push({
+        id: disc.id,
+        ruleId: rule.id,
+        name: dd.name || rd.name || "Discount",
+        percent: dd.percentage ? Number(dd.percentage) : null,
+        amountMoney: dd.amount_money || null,
+        discountType: dd.discount_type || null,
+        minItems: qmin != null ? Number(qmin) : null,
+        ruleName: rd.name || null,
+      });
+    }
+    promos.sort((a, b) => (a.minItems || 0) - (b.minItems || 0));
+    const summary = promos.length
+      ? promos
+          .map((p) =>
+            p.minItems && p.percent != null
+              ? `${p.minItems}+ items: ${p.percent}% off`
+              : p.name
+          )
+          .join(" · ")
+      : "None (manage in Square Dashboard)";
+    return { source: "square_catalog", promos, summary };
+  } catch (e) {
+    console.warn("listCatalogDiscounts failed", e.message);
+    return { source: "square_catalog", promos: [], summary: "Unavailable" };
+  }
 }
 
 function notifyEmail(env) {
@@ -241,43 +239,154 @@ function variationTracksInventory(vd, locationId) {
 }
 
 /**
- * Build Square order line items so only real stock hits inventory.
- * MTO is a custom line (same price) and does NOT decrement Square stock.
+ * Catalog line items for full qty so Square pricing rules/discounts apply
+ * (same catalog as POS). MTO units are restored to inventory after payment.
  */
-function buildSquareLineItems(lines, currency) {
+function buildSquareLineItems(lines) {
   const items = [];
   for (const l of lines) {
-    const inStock = Math.max(0, Number(l.inStockQty) || 0);
-    const mto = Math.max(0, Number(l.mtoQty) || 0);
-    const cur = l.currency || currency || "USD";
-
-    if (inStock > 0) {
-      items.push({
-        quantity: String(inStock),
-        catalog_object_id: l.variationId,
-        note: "In stock",
-      });
-    }
-    if (mto > 0) {
-      items.push({
-        quantity: String(mto),
-        name: `${l.itemName} (Made to order)`,
-        base_price_money: {
-          amount: l.unitAmount,
-          currency: cur,
-        },
-        note: "MTO — do not pull from shelf stock; make & ship with order within 1 week",
-      });
-    }
-    // Untracked items: full qty as catalog if we have a variation id
-    if (!l.trackInventory && l.quantity > 0 && inStock === 0 && mto === 0) {
-      items.push({
-        quantity: String(l.quantity),
-        catalog_object_id: l.variationId,
-      });
-    }
+    if (l.quantity <= 0) continue;
+    const noteParts = [];
+    if (l.inStockQty) noteParts.push(`${l.inStockQty} in stock`);
+    if (l.mtoQty) noteParts.push(`${l.mtoQty} made-to-order`);
+    items.push({
+      quantity: String(l.quantity),
+      catalog_object_id: l.variationId,
+      ...(noteParts.length ? { note: noteParts.join(" · ") } : {}),
+    });
   }
   return items;
+}
+
+/** After payment, put MTO units back on the shelf (Square decremented full qty). */
+async function restoreMtoInventory(env, lines) {
+  const now = new Date().toISOString().replace(/\.\d{3}Z$/, ".000Z");
+  const changes = [];
+  for (const l of lines) {
+    const mto = Math.max(0, Number(l.mtoQty) || 0);
+    if (!mto || !l.trackInventory) continue;
+    // Move MTO portion from SOLD back to IN_STOCK
+    changes.push({
+      type: "ADJUSTMENT",
+      adjustment: {
+        catalog_object_id: l.variationId,
+        from_state: "SOLD",
+        to_state: "IN_STOCK",
+        quantity: String(mto),
+        location_id: env.SQUARE_LOCATION_ID,
+        occurred_at: now,
+      },
+    });
+  }
+  if (!changes.length) return;
+  try {
+    await squareFetch(env, "/v2/inventory/changes/batch-create", {
+      method: "POST",
+      body: {
+        idempotency_key: crypto.randomUUID(),
+        changes,
+      },
+    });
+  } catch (e) {
+    console.error("restoreMtoInventory failed", e.message, e.details);
+  }
+}
+
+/** Build order payload shared by CalculateOrder and CreateOrder. */
+function buildOrderPayload(env, { lines, currency, shipping, shippingInfo, allocation, taxCfg }) {
+  const lineItems = buildSquareLineItems(lines);
+  const order = {
+    location_id: env.SQUARE_LOCATION_ID,
+    line_items: lineItems,
+    service_charges: [
+      {
+        name: "Flat rate shipping",
+        amount_money: { amount: shipping, currency },
+        calculation_phase: "SUBTOTAL_PHASE",
+        taxable: taxAppliesToShipping(env),
+      },
+    ],
+    ...(taxCfg.percent > 0
+      ? {
+          taxes: [
+            {
+              uid: "SALES_TAX",
+              name: taxCfg.name,
+              percentage: String(taxCfg.percent),
+              scope: "ORDER",
+            },
+          ],
+        }
+      : {}),
+    // Same catalog pricing rules as POS / Square Online
+    pricing_options: {
+      auto_apply_discounts: true,
+    },
+  };
+
+  if (shippingInfo) {
+    order.reference_id = `web-${Date.now()}`;
+    order.fulfillments = [
+      {
+        type: "SHIPMENT",
+        state: "PROPOSED",
+        shipment_details: {
+          recipient: {
+            display_name: shippingInfo.displayName,
+            email_address: shippingInfo.email,
+            ...(shippingInfo.phone
+              ? { phone_number: shippingInfo.phone }
+              : {}),
+            address: shippingInfo.address,
+          },
+          shipping_note:
+            allocation?.totalMto > 0
+              ? `MADE TO ORDER: ${allocation.totalMto} unit(s). Ship ALL items together within 1 week.`
+              : "Ship all items together.",
+        },
+      },
+    ];
+    order.metadata = {
+      source: "packmulehouse-website",
+      channel: "custom_web",
+      mto_units: String(allocation?.totalMto || 0),
+      in_stock_units: String(
+        (lines || []).reduce((n, l) => n + (l.inStockQty || 0), 0)
+      ),
+      ship_together: "true",
+      tax_percent: String(taxCfg.percent),
+    };
+  }
+
+  return order;
+}
+
+function summarizeSquareOrder(order, fallback = {}) {
+  const discounts = order.discounts || [];
+  const discountNames = discounts
+    .map((d) => d.name || "Discount")
+    .filter(Boolean);
+  return {
+    subtotal:
+      order.net_amounts?.total_money != null
+        ? // net total is after tax in some fields — use line item sum for merch
+          fallback.subtotal
+        : fallback.subtotal,
+    discount: order.total_discount_money?.amount || 0,
+    discountLabel: discountNames.length
+      ? discountNames.join(", ")
+      : fallback.discountLabel || null,
+    tax: order.total_tax_money?.amount || 0,
+    shipping: fallback.shipping || 0,
+    amount: order.total_money?.amount || 0,
+    currency: order.total_money?.currency || "USD",
+    appliedDiscounts: discounts.map((d) => ({
+      name: d.name,
+      percentage: d.percentage,
+      amount: d.applied_money?.amount || 0,
+      catalogObjectId: d.catalog_object_id || null,
+    })),
+  };
 }
 
 function mapCatalogToProducts(objects, inventoryMap) {
@@ -351,6 +460,7 @@ async function handleConfig(env) {
   const ship = shippingCents(env);
   const mto = await getMtoState(env);
   const tax = taxConfigPublic(env);
+  const discounts = await listCatalogDiscounts(env);
   return json({
     applicationId: env.SQUARE_APPLICATION_ID,
     locationId: env.SQUARE_LOCATION_ID,
@@ -358,7 +468,7 @@ async function handleConfig(env) {
     shippingCents: ship,
     shippingLabel: formatMoney(ship, "USD"),
     tax,
-    discounts: discountConfigPublic(env),
+    discounts,
     lowStockThreshold: lowStockThreshold(env),
     mto: {
       enabled: mto.enabled,
@@ -440,7 +550,7 @@ async function handleCatalog(env) {
       shippingCents: shippingCents(env),
       shippingLabel: formatMoney(shippingCents(env), "USD"),
       tax: taxConfigPublic(env),
-      discounts: discountConfigPublic(env),
+      discounts: await listCatalogDiscounts(env),
       lowStockThreshold: threshold,
       mto: {
         enabled: mto.enabled,
@@ -968,6 +1078,98 @@ function buildOrderEmail({
   };
 }
 
+async function resolveCartLines(env, rawItems) {
+  const lines = [];
+  for (const line of rawItems) {
+    const variationId = line.variationId || line.variation_id;
+    if (!variationId) {
+      const err = new Error("Each cart line needs a variationId");
+      err.status = 400;
+      throw err;
+    }
+    lines.push(await resolveVariationLine(env, variationId, line.quantity));
+  }
+  const currency = lines[0]?.currency || "USD";
+  for (const line of lines) {
+    if (line.currency !== currency) {
+      const err = new Error("All cart items must share the same currency");
+      err.status = 400;
+      throw err;
+    }
+  }
+  const allocation = await allocateOrderLines(env, lines);
+  return { lines, currency, allocation };
+}
+
+/** Preview totals using Square CalculateOrder (same discounts as POS). */
+async function handleQuote(request, env) {
+  if (request.method !== "POST") {
+    return error("Method not allowed", 405);
+  }
+  let body;
+  try {
+    body = await request.json();
+  } catch {
+    return error("Invalid JSON body");
+  }
+  let rawItems = Array.isArray(body.items) ? body.items : null;
+  if (!rawItems?.length) return error("Cart is empty");
+
+  try {
+    const { lines, currency, allocation } = await resolveCartLines(
+      env,
+      rawItems
+    );
+    const subtotal = lines.reduce((sum, line) => sum + line.lineTotal, 0);
+    const shipping = shippingCents(env);
+    const taxCfg = taxConfigPublic(env);
+    const order = buildOrderPayload(env, {
+      lines,
+      currency,
+      shipping,
+      shippingInfo: null,
+      allocation,
+      taxCfg,
+    });
+    const calc = await squareFetch(env, "/v2/orders/calculate", {
+      method: "POST",
+      body: { order },
+    });
+    const o = calc.order;
+    const discount = o.total_discount_money?.amount || 0;
+    const tax = o.total_tax_money?.amount || 0;
+    const amount = o.total_money?.amount || 0;
+    const applied = (o.discounts || []).map((d) => ({
+      name: d.name,
+      percentage: d.percentage,
+      amount: d.applied_money?.amount || 0,
+      catalogObjectId: d.catalog_object_id || null,
+    }));
+    return json({
+      ok: true,
+      subtotal,
+      shipping,
+      discount,
+      discountLabel: applied.map((a) => a.name).filter(Boolean).join(", ") || null,
+      tax,
+      taxLabel: `${taxCfg.name} (${taxCfg.label})`,
+      amount,
+      currency,
+      amountLabel: formatMoney(amount, currency),
+      shippingLabel: formatMoney(shipping, currency),
+      discountLabelMoney: discount
+        ? `−${formatMoney(discount, currency)}`
+        : null,
+      taxAmountLabel: formatMoney(tax, currency),
+      appliedDiscounts: applied,
+      mtoUnits: allocation.totalMto || 0,
+      itemCount: lines.reduce((n, l) => n + l.quantity, 0),
+    });
+  } catch (e) {
+    return error(e.message || "Quote failed", e.status || 502, e.details);
+  }
+}
+
 async function handlePay(request, env) {
   if (request.method !== "POST") {
     return error("Method not allowed", 405);
@@ -1000,14 +1202,14 @@ async function handlePay(request, env) {
   const shippingInfo = parseAddress(body);
   if (shippingInfo.error) return error(shippingInfo.error);
 
-  // Resolve catalog prices (never trust client)
-  const lines = [];
+  let lines;
+  let currency;
+  let allocation;
   try {
-    for (const line of rawItems) {
-      const variationId = line.variationId || line.variation_id;
-      if (!variationId) return error("Each cart line needs a variationId");
-      lines.push(await resolveVariationLine(env, variationId, line.quantity));
-    }
+    const resolved = await resolveCartLines(env, rawItems);
+    lines = resolved.lines;
+    currency = resolved.currency;
+    allocation = resolved.allocation;
   } catch (e) {
     return error(
       e.message || "Product not found in Square catalog",
@@ -1016,35 +1218,9 @@ async function handlePay(request, env) {
     );
   }
 
-  const currency = lines[0].currency;
-  for (const line of lines) {
-    if (line.currency !== currency) {
-      return error("All cart items must share the same currency");
-    }
-  }
-
-  let allocation;
-  try {
-    allocation = await allocateOrderLines(env, lines);
-  } catch (e) {
-    return error(e.message, e.status || 409, e.details);
-  }
-
   const subtotal = lines.reduce((sum, line) => sum + line.lineTotal, 0);
-  const itemCount = lines.reduce((n, l) => n + l.quantity, 0);
   const shipping = shippingCents(env);
   const taxCfg = taxConfigPublic(env);
-  const { cents: discountEstimate, tier: discountTier } = estimateDiscountCents(
-    env,
-    subtotal,
-    itemCount
-  );
-  const taxEstimate = estimateTaxCents(
-    env,
-    subtotal,
-    shipping,
-    discountEstimate
-  );
   if (subtotal <= 0) return error("Invalid cart total");
 
   // Reserve MTO capacity BEFORE charging so two concurrent checkouts can't oversell the pool
@@ -1074,10 +1250,10 @@ async function handlePay(request, env) {
     }
   }
 
-  // 1) Create Square Order — stock/MTO split + tax on top
+  // 1) Create Square Order — catalog lines + auto-applied Square discounts + tax
   let order;
   try {
-    const lineItems = buildSquareLineItems(lines, currency);
+    const lineItems = buildSquareLineItems(lines);
     if (!lineItems.length) {
       await releaseMtoReservation();
       return error("No fulfillable line items");
@@ -1085,74 +1261,14 @@ async function handlePay(request, env) {
 
     const orderBody = {
       idempotency_key: crypto.randomUUID(),
-      order: {
-        location_id: env.SQUARE_LOCATION_ID,
-        reference_id: `web-${Date.now()}`,
-        line_items: lineItems,
-        service_charges: [
-          {
-            name: "Flat rate shipping",
-            amount_money: { amount: shipping, currency },
-            // SUBTOTAL_PHASE so shipping can be taxable; TOTAL_PHASE cannot be taxable
-            calculation_phase: "SUBTOTAL_PHASE",
-            taxable: taxAppliesToShipping(env),
-          },
-        ],
-        ...(discountTier
-          ? {
-              discounts: [
-                {
-                  uid: "VOLUME_DISCOUNT",
-                  name: discountTier.name,
-                  percentage: String(discountTier.percent),
-                  scope: "ORDER",
-                },
-              ],
-            }
-          : {}),
-        ...(taxCfg.percent > 0
-          ? {
-              taxes: [
-                {
-                  uid: "SALES_TAX",
-                  name: taxCfg.name,
-                  percentage: String(taxCfg.percent),
-                  scope: "ORDER",
-                },
-              ],
-            }
-          : {}),
-        fulfillments: [
-          {
-            type: "SHIPMENT",
-            state: "PROPOSED",
-            shipment_details: {
-              recipient: {
-                display_name: shippingInfo.displayName,
-                email_address: shippingInfo.email,
-                ...(shippingInfo.phone
-                  ? { phone_number: shippingInfo.phone }
-                  : {}),
-                address: shippingInfo.address,
-              },
-              shipping_note:
-                allocation.totalMto > 0
-                  ? `MADE TO ORDER: ${allocation.totalMto} unit(s). Ship ALL items together within 1 week. MTO lines are not shelf stock.`
-                  : "Ship all items together.",
-            },
-          },
-        ],
-        metadata: {
-          source: "packmulehouse-website",
-          channel: "custom_web",
-          mto_units: String(allocation.totalMto || 0),
-          in_stock_units: String(
-            lines.reduce((n, l) => n + (l.inStockQty || 0), 0)
-          ),
-          ship_together: "true",
-          tax_percent: String(taxCfg.percent),
-        },
-      },
+      order: buildOrderPayload(env, {
+        lines,
+        currency,
+        shipping,
+        shippingInfo,
+        allocation,
+        taxCfg,
+      }),
     };
 
     const created = await squareFetch(env, "/v2/orders", {
@@ -1176,27 +1292,11 @@ async function handlePay(request, env) {
     return error("Square order missing total", 502);
   }
 
-  // Discount + tax from Square order when present
-  const discountCollected =
-    order.total_discount_money?.amount != null
-      ? order.total_discount_money.amount
-      : discountEstimate;
-  const taxCollected =
-    order.total_tax_money?.amount != null
-      ? order.total_tax_money.amount
-      : taxEstimate;
-
-  // Sanity: order total ≈ subtotal - discount + shipping + tax
-  const expected = subtotal - discountEstimate + shipping + taxEstimate;
-  if (Math.abs(orderTotal - expected) > 2) {
-    console.warn("Order total mismatch", {
-      orderTotal,
-      expected,
-      discountCollected,
-      taxCollected,
-      taxEstimate,
-    });
-  }
+  const discountCollected = order.total_discount_money?.amount || 0;
+  const taxCollected = order.total_tax_money?.amount || 0;
+  const appliedDiscountNames = (order.discounts || [])
+    .map((d) => d.name)
+    .filter(Boolean);
 
   // 2) Pay the order
   let payment;
@@ -1229,6 +1329,8 @@ async function handlePay(request, env) {
     payment = paid.payment;
     // Payment succeeded — keep MTO reservation (already consumed)
     mtoReserved = 0;
+    // Put MTO units back in stock (catalog lines decremented full qty for discounts)
+    await restoreMtoInventory(env, lines);
   } catch (e) {
     console.error("Pay order failed", e.details || e.message);
     await releaseMtoReservation();
@@ -1260,8 +1362,8 @@ async function handlePay(request, env) {
       shipping,
       subtotal,
       discount: discountCollected,
-      discountLabel: discountTier
-        ? `${discountTier.name} (${discountTier.label})`
+      discountLabel: appliedDiscountNames.length
+        ? appliedDiscountNames.join(", ")
         : null,
       tax: taxCollected,
       taxLabel: `${taxCfg.name} (${taxCfg.label})`,
@@ -1292,10 +1394,15 @@ async function handlePay(request, env) {
     subtotal,
     shipping,
     discount: discountCollected,
-    discountLabel: discountTier
-      ? `${discountTier.name} (${discountTier.label})`
+    discountLabel: appliedDiscountNames.length
+      ? appliedDiscountNames.join(", ")
       : null,
-    discountPercent: discountTier?.percent || 0,
+    appliedDiscounts: (order.discounts || []).map((d) => ({
+      name: d.name,
+      percentage: d.percentage,
+      amount: d.applied_money?.amount || 0,
+      catalogObjectId: d.catalog_object_id || null,
+    })),
     tax: taxCollected,
     taxLabel: `${taxCfg.name} (${taxCfg.label})`,
     taxPercent: taxCfg.percent,
@@ -1520,6 +1627,9 @@ export default {
       }
       if (url.pathname === "/api/pay") {
         return handlePay(request, env);
+      }
+      if (url.pathname === "/api/quote" && request.method === "POST") {
+        return handleQuote(request, env);
       }
       if (url.pathname === "/api/notify-test" && request.method === "POST") {
         return handleNotifyTest(env);

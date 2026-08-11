@@ -39,20 +39,16 @@
     appliesToShipping: true,
     label: "6%",
   };
-  /** @type {{ tiers: { minItems: number, percent: number }[], summary: string }} */
-  let discountInfo = {
-    tiers: [
-      { minItems: 3, percent: 5 },
-      { minItems: 5, percent: 10 },
-      { minItems: 10, percent: 15 },
-    ],
-    summary: "3+ items: 5% off · 5+ items: 10% off · 10+ items: 15% off",
-  };
+  /** Square catalog promos (display only; amounts from /api/quote) */
+  let discountInfo = { promos: [], summary: "" };
   let mtoInfo = {
     open: true,
     remaining: 50,
     promise: "Ships within 1 week (all items together)",
   };
+  /** Latest Square-calculated quote */
+  let quote = null;
+  let quoteTimer = null;
   let productsById = new Map();
   let variationsById = new Map();
   let card = null;
@@ -119,36 +115,19 @@
     return "USD";
   }
 
-  function volumeTier() {
-    return Array.isArray(discountInfo.tiers) ? discountInfo.tiers : [];
-  }
-
-  function activeVolumeTier() {
-    const count = cartCount();
-    let best = null;
-    for (const t of volumeTier()) {
-      if (count >= t.minItems) best = t;
-    }
-    return best;
-  }
-
   function cartDiscountCents() {
-    if (!cart.length) return 0;
-    const tier = activeVolumeTier();
-    if (!tier) return 0;
-    return Math.round((cartSubtotalCents() * tier.percent) / 100);
+    return quote?.discount || 0;
   }
 
   function discountLabelText() {
-    const tier = activeVolumeTier();
-    if (!tier) return "Discount";
-    return `Volume discount (${tier.minItems}+ items, ${tier.percent}% off)`;
+    return quote?.discountLabel || "Discount";
   }
 
   function cartTaxCents() {
-    if (!cart.length) return 0;
+    if (quote && quote.tax != null) return quote.tax;
+    // Fallback estimate until quote returns
     const pct = Number(taxInfo.percent) || 0;
-    if (pct <= 0) return 0;
+    if (pct <= 0 || !cart.length) return 0;
     const merch = Math.max(0, cartSubtotalCents() - cartDiscountCents());
     const base =
       merch + (taxInfo.appliesToShipping !== false ? shippingCents : 0);
@@ -156,6 +135,7 @@
   }
 
   function cartGrandTotalCents() {
+    if (quote && quote.amount != null) return quote.amount;
     if (!cart.length) return 0;
     return (
       cartSubtotalCents() -
@@ -166,9 +146,50 @@
   }
 
   function taxLabelText() {
+    if (quote?.taxLabel) return quote.taxLabel;
     const name = taxInfo.name || "Sales Tax";
     const label = taxInfo.label || `${taxInfo.percent || 0}%`;
     return `${name} (${label})`;
+  }
+
+  async function refreshQuote() {
+    if (!cart.length) {
+      quote = null;
+      return null;
+    }
+    try {
+      const res = await fetch("/api/quote", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          items: cart.map((l) => ({
+            variationId: l.variationId,
+            quantity: l.quantity,
+          })),
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || data.error) {
+        console.warn("quote failed", data.error || res.status);
+        quote = null;
+        return null;
+      }
+      quote = data;
+      return data;
+    } catch (e) {
+      console.warn("quote error", e);
+      quote = null;
+      return null;
+    }
+  }
+
+  function scheduleQuoteAndRender() {
+    clearTimeout(quoteTimer);
+    quoteTimer = setTimeout(async () => {
+      await refreshQuote();
+      renderCartLines();
+      if (panelPay && !panelPay.hidden) renderPaySummary();
+    }, 200);
   }
 
   function updateCartBadge() {
@@ -295,6 +316,7 @@
       cart.push({ variationId: variation.id, quantity: qty });
     }
     saveCart();
+    scheduleQuoteAndRender();
 
     const stock = variation.stock ?? product.stock;
     const mtoPart =
@@ -326,7 +348,7 @@
       if (line) line.quantity = qty;
     }
     saveCart();
-    renderCartLines();
+    scheduleQuoteAndRender();
   }
 
   function cartHasMto() {
@@ -353,7 +375,7 @@
   function removeLine(variationId) {
     cart = cart.filter((l) => l.variationId !== variationId);
     saveCart();
-    renderCartLines();
+    scheduleQuoteAndRender();
   }
 
   function renderProducts(products) {
@@ -606,15 +628,18 @@
       </div>`
         : "";
 
-    const nextTierHint = (() => {
+    const promoHint = (() => {
       const count = cartCount();
-      const tiers = volumeTier().slice().sort((a, b) => a.minItems - b.minItems);
-      const next = tiers.find((t) => t.minItems > count);
+      const promos = (discountInfo.promos || [])
+        .filter((p) => p.minItems != null && p.percent != null)
+        .slice()
+        .sort((a, b) => a.minItems - b.minItems);
+      const next = promos.find((p) => p.minItems > count);
       if (!next) return "";
       const need = next.minItems - count;
       return `<p class="field-hint" style="margin-top:0.65rem">Add ${need} more item${
         need === 1 ? "" : "s"
-      } for ${next.percent}% off</p>`;
+      } for ${next.percent}% off (Square promo)</p>`;
     })();
 
     paySummary.innerHTML =
@@ -631,7 +656,7 @@
       <div class="modal-summary-row total">
         <span>Total</span>
         <span>${moneyLabel(cartGrandTotalCents(), currency)}</span>
-      </div>${mtoNote}${nextTierHint}`;
+      </div>${mtoNote}${promoHint}`;
   }
 
   function escapeHtml(str) {
@@ -658,12 +683,16 @@
     }, 200);
   }
 
-  function showCartStep() {
+  async function showCartStep() {
     panelCart.hidden = false;
     panelPay.hidden = true;
     checkoutTitle.textContent = "Your cart";
-    checkoutSubtitle.textContent = "Add kits, then checkout when you’re ready";
+    checkoutSubtitle.textContent =
+      discountInfo.summary && discountInfo.summary !== "None"
+        ? discountInfo.summary
+        : "Add kits, then checkout when you’re ready";
     setStatus("");
+    await refreshQuote();
     renderCartLines();
   }
 
@@ -681,6 +710,7 @@
     if (sandboxHint) {
       sandboxHint.hidden = config?.environment === "production";
     }
+    await refreshQuote();
     renderPaySummary();
 
     try {
