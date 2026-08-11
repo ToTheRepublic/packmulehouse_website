@@ -1006,8 +1006,8 @@ async function handlePay(request, env) {
           {
             name: "Flat rate shipping",
             amount_money: { amount: shipping, currency },
-            calculation_phase: "TOTAL_PHASE",
-            // Taxable when TAX_APPLIES_TO_SHIPPING is true
+            // SUBTOTAL_PHASE so shipping can be taxable; TOTAL_PHASE cannot be taxable
+            calculation_phase: "SUBTOTAL_PHASE",
             taxable: taxAppliesToShipping(env),
           },
         ],
