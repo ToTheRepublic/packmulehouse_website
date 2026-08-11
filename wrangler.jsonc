@@ -21,6 +21,11 @@
     "SQUARE_LOCATION_ID": "LKJ4C91RD6JQH",
     "SQUARE_ENVIRONMENT": "sandbox",
     "SHIPPING_CENTS": "1000",
+    // Sales tax (on top of prices). Origin-style flat rate for your location — change if your accountant says otherwise.
+    "TAX_PERCENT": "6",
+    "TAX_NAME": "Sales Tax",
+    // Tax shipping as well as merchandise (common; set "false" to tax products only)
+    "TAX_APPLIES_TO_SHIPPING": "true",
     "MERCHANT_NOTIFY_EMAIL": "packmulehouse@gmail.com",
     "NTFY_TOPIC": "packmulehouse-orders-pmh7k2x9",
     "NTFY_SERVER": "https://ntfy.sh",

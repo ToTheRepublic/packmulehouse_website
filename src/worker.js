@@ -98,6 +98,40 @@ function shippingCents(env) {
   return Number.isFinite(n) && n >= 0 ? Math.round(n) : SHIPPING_CENTS;
 }
 
+function taxPercent(env) {
+  const n = Number(env.TAX_PERCENT);
+  return Number.isFinite(n) && n >= 0 ? n : 6;
+}
+
+function taxName(env) {
+  return (env.TAX_NAME || "Sales Tax").trim() || "Sales Tax";
+}
+
+function taxAppliesToShipping(env) {
+  const v = env.TAX_APPLIES_TO_SHIPPING;
+  if (v === "false" || v === "0") return false;
+  return true; // default: tax merchandise + shipping
+}
+
+/** Estimate tax in cents (Square is source of truth on the order). */
+function estimateTaxCents(env, subtotalCents, shippingCentsAmt) {
+  const pct = taxPercent(env);
+  if (pct <= 0) return 0;
+  const base =
+    subtotalCents + (taxAppliesToShipping(env) ? shippingCentsAmt : 0);
+  return Math.round((base * pct) / 100);
+}
+
+function taxConfigPublic(env) {
+  const pct = taxPercent(env);
+  return {
+    percent: pct,
+    name: taxName(env),
+    appliesToShipping: taxAppliesToShipping(env),
+    label: pct > 0 ? `${pct}%` : "None",
+  };
+}
+
 function notifyEmail(env) {
   return (env.MERCHANT_NOTIFY_EMAIL || MERCHANT_NOTIFY_EMAIL).trim();
 }
@@ -257,12 +291,14 @@ function mapCatalogToProducts(objects, inventoryMap) {
 async function handleConfig(env) {
   const ship = shippingCents(env);
   const mto = await getMtoState(env);
+  const tax = taxConfigPublic(env);
   return json({
     applicationId: env.SQUARE_APPLICATION_ID,
     locationId: env.SQUARE_LOCATION_ID,
     environment: env.SQUARE_ENVIRONMENT || "sandbox",
     shippingCents: ship,
     shippingLabel: formatMoney(ship, "USD"),
+    tax,
     lowStockThreshold: lowStockThreshold(env),
     mto: {
       enabled: mto.enabled,
@@ -343,6 +379,7 @@ async function handleCatalog(env) {
       count: products.length,
       shippingCents: shippingCents(env),
       shippingLabel: formatMoney(shippingCents(env), "USD"),
+      tax: taxConfigPublic(env),
       lowStockThreshold: threshold,
       mto: {
         enabled: mto.enabled,
@@ -707,6 +744,8 @@ function buildOrderEmail({
   lines,
   shipping,
   subtotal,
+  tax,
+  taxLabel,
   total,
   currency,
   shippingInfo,
@@ -750,8 +789,9 @@ function buildOrderEmail({
     "Items:",
     itemLines,
     "",
-    `Subtotal: ${formatMoney(subtotal ?? total - shipping, cur)}`,
+    `Subtotal: ${formatMoney(subtotal ?? 0, cur)}`,
     `Shipping: ${formatMoney(shipping, cur)} (flat rate)`,
+    `Tax (${taxLabel || "Sales Tax"}): ${formatMoney(tax || 0, cur)}`,
     `Total charged: ${formatMoney(total, cur)}`,
     hasMto ? `MTO units this order: ${totalMto} · remaining after: ${mtoRemainingAfter}` : "",
     "",
@@ -786,12 +826,17 @@ function buildOrderEmail({
     { name: "Items", value: itemsField || "—", inline: false },
     {
       name: "Subtotal",
-      value: formatMoney(subtotal ?? total - shipping, cur),
+      value: formatMoney(subtotal ?? 0, cur),
       inline: true,
     },
     {
       name: "Shipping",
       value: `${formatMoney(shipping, cur)} flat`,
+      inline: true,
+    },
+    {
+      name: taxLabel || "Sales Tax",
+      value: formatMoney(tax || 0, cur),
       inline: true,
     },
     { name: "Total paid", value: `**${totalLabel}**`, inline: true },
@@ -911,6 +956,8 @@ async function handlePay(request, env) {
 
   const subtotal = lines.reduce((sum, line) => sum + line.lineTotal, 0);
   const shipping = shippingCents(env);
+  const taxCfg = taxConfigPublic(env);
+  const taxEstimate = estimateTaxCents(env, subtotal, shipping);
   if (subtotal <= 0) return error("Invalid cart total");
 
   // Reserve MTO capacity BEFORE charging so two concurrent checkouts can't oversell the pool
@@ -931,10 +978,7 @@ async function handlePay(request, env) {
       const state = await getMtoState(env);
       const next = Math.min(state.max, state.remaining + mtoReserved);
       await env.MTO_STATE.put("remaining", String(next));
-      // Re-open if we had auto-disabled at 0 and still enabled flag was false due to drain
       if (next > 0 && !state.enabled) {
-        // Only re-enable if disable was auto from empty pool (we set enabled false at 0)
-        // Don't re-enable if merchant manually stood by with remaining > 0 — remaining was 0 case
         await env.MTO_STATE.put("enabled", "true");
       }
       mtoReserved = 0;
@@ -943,7 +987,7 @@ async function handlePay(request, env) {
     }
   }
 
-  // 1) Create Square Order — split stock (catalog) vs MTO (custom lines)
+  // 1) Create Square Order — stock/MTO split + tax on top
   let order;
   try {
     const lineItems = buildSquareLineItems(lines, currency);
@@ -963,9 +1007,22 @@ async function handlePay(request, env) {
             name: "Flat rate shipping",
             amount_money: { amount: shipping, currency },
             calculation_phase: "TOTAL_PHASE",
-            taxable: false,
+            // Taxable when TAX_APPLIES_TO_SHIPPING is true
+            taxable: taxAppliesToShipping(env),
           },
         ],
+        ...(taxCfg.percent > 0
+          ? {
+              taxes: [
+                {
+                  uid: "SALES_TAX",
+                  name: taxCfg.name,
+                  percentage: String(taxCfg.percent),
+                  scope: "ORDER",
+                },
+              ],
+            }
+          : {}),
         fulfillments: [
           {
             type: "SHIPMENT",
@@ -994,6 +1051,7 @@ async function handlePay(request, env) {
             lines.reduce((n, l) => n + (l.inStockQty || 0), 0)
           ),
           ship_together: "true",
+          tax_percent: String(taxCfg.percent),
         },
       },
     };
@@ -1019,10 +1077,21 @@ async function handlePay(request, env) {
     return error("Square order missing total", 502);
   }
 
-  // Sanity: order total should match cart (subtotal + shipping)
-  const expected = subtotal + shipping;
-  if (Math.abs(orderTotal - expected) > 1) {
-    console.warn("Order total mismatch", { orderTotal, expected, lines });
+  // Tax amount from Square order when present
+  const taxCollected =
+    order.total_tax_money?.amount != null
+      ? order.total_tax_money.amount
+      : taxEstimate;
+
+  // Sanity: order total ≈ subtotal + shipping + tax
+  const expected = subtotal + shipping + taxEstimate;
+  if (Math.abs(orderTotal - expected) > 2) {
+    console.warn("Order total mismatch", {
+      orderTotal,
+      expected,
+      taxCollected,
+      taxEstimate,
+    });
   }
 
   // 2) Pay the order
@@ -1086,6 +1155,8 @@ async function handlePay(request, env) {
       lines,
       shipping,
       subtotal,
+      tax: taxCollected,
+      taxLabel: `${taxCfg.name} (${taxCfg.label})`,
       total: orderTotal,
       currency: order.total_money.currency || currency,
       shippingInfo,
@@ -1112,6 +1183,9 @@ async function handlePay(request, env) {
     receiptUrl: payment?.receipt_url || null,
     subtotal,
     shipping,
+    tax: taxCollected,
+    taxLabel: `${taxCfg.name} (${taxCfg.label})`,
+    taxPercent: taxCfg.percent,
     amount: orderTotal,
     currency: order.total_money.currency || currency,
     amountLabel: formatMoney(
@@ -1119,6 +1193,7 @@ async function handlePay(request, env) {
       order.total_money.currency || currency
     ),
     shippingLabel: formatMoney(shipping, currency),
+    taxAmountLabel: formatMoney(taxCollected, currency),
     items: lines.map((l) => ({
       variationId: l.variationId,
       itemName: l.itemName,

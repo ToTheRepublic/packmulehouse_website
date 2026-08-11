@@ -16,6 +16,8 @@
   const cartLinesEl = document.getElementById("cart-lines");
   const cartSubtotalEl = document.getElementById("cart-subtotal");
   const cartShippingEl = document.getElementById("cart-shipping");
+  const cartTaxEl = document.getElementById("cart-tax");
+  const cartTaxLabelEl = document.getElementById("cart-tax-label");
   const cartTotalEl = document.getElementById("cart-total");
   const panelCart = document.getElementById("panel-cart");
   const panelPay = document.getElementById("panel-pay");
@@ -28,6 +30,12 @@
 
   let config = null;
   let shippingCents = 1000;
+  let taxInfo = {
+    percent: 6,
+    name: "Sales Tax",
+    appliesToShipping: true,
+    label: "6%",
+  };
   let mtoInfo = {
     open: true,
     remaining: 50,
@@ -99,9 +107,25 @@
     return "USD";
   }
 
+  function cartTaxCents() {
+    if (!cart.length) return 0;
+    const pct = Number(taxInfo.percent) || 0;
+    if (pct <= 0) return 0;
+    const base =
+      cartSubtotalCents() +
+      (taxInfo.appliesToShipping !== false ? shippingCents : 0);
+    return Math.round((base * pct) / 100);
+  }
+
   function cartGrandTotalCents() {
     if (!cart.length) return 0;
-    return cartSubtotalCents() + shippingCents;
+    return cartSubtotalCents() + shippingCents + cartTaxCents();
+  }
+
+  function taxLabelText() {
+    const name = taxInfo.name || "Sales Tax";
+    const label = taxInfo.label || `${taxInfo.percent || 0}%`;
+    return `${name} (${label})`;
   }
 
   function updateCartBadge() {
@@ -413,6 +437,13 @@
     cartShippingEl.textContent = cart.length
       ? moneyLabel(shippingCents, currency)
       : moneyLabel(0, currency);
+    if (cartTaxLabelEl) cartTaxLabelEl.textContent = taxLabelText();
+    if (cartTaxEl) {
+      cartTaxEl.textContent = moneyLabel(
+        cart.length ? cartTaxCents() : 0,
+        currency
+      );
+    }
     cartTotalEl.textContent = moneyLabel(cart.length ? grand : 0, currency);
 
     if (!cart.length) {
@@ -522,6 +553,10 @@
       `<div class="modal-summary-row">
         <span>Shipping (flat rate)</span>
         <span>${moneyLabel(shippingCents, currency)}</span>
+      </div>
+      <div class="modal-summary-row">
+        <span>${escapeHtml(taxLabelText())}</span>
+        <span>${moneyLabel(cartTaxCents(), currency)}</span>
       </div>
       <div class="modal-summary-row total">
         <span>Total</span>
@@ -772,6 +807,7 @@
       if (!configRes.ok) throw new Error("Could not load payment config");
       config = await configRes.json();
       shippingCents = Number(config.shippingCents) || 1000;
+      if (config.tax) taxInfo = { ...taxInfo, ...config.tax };
       if (config.mto) mtoInfo = { ...mtoInfo, ...config.mto };
 
       if (config.environment !== "production" && envBadge) {
@@ -788,6 +824,7 @@
       if (catalog.shippingCents != null) {
         shippingCents = Number(catalog.shippingCents) || shippingCents;
       }
+      if (catalog.tax) taxInfo = { ...taxInfo, ...catalog.tax };
       if (catalog.mto) mtoInfo = { ...mtoInfo, ...catalog.mto };
       const products = catalog.products || [];
       indexCatalog(products);
