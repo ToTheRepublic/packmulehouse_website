@@ -26,6 +26,9 @@
     "TAX_NAME": "Sales Tax",
     // Tax shipping as well as merchandise (common; set "false" to tax products only)
     "TAX_APPLIES_TO_SHIPPING": "true",
+    // Volume discount tiers: "minItems:percentOff,..." (highest matching tier wins)
+    // Example: 3+ items 5% off, 5+ 10% off, 10+ 15% off
+    "VOLUME_DISCOUNT_TIERS": "3:5,5:10,10:15",
     "MERCHANT_NOTIFY_EMAIL": "packmulehouse@gmail.com",
     "NTFY_TOPIC": "packmulehouse-orders-pmh7k2x9",
     "NTFY_SERVER": "https://ntfy.sh",

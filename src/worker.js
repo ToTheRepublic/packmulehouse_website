@@ -113,15 +113,6 @@ function taxAppliesToShipping(env) {
   return true; // default: tax merchandise + shipping
 }
 
-/** Estimate tax in cents (Square is source of truth on the order). */
-function estimateTaxCents(env, subtotalCents, shippingCentsAmt) {
-  const pct = taxPercent(env);
-  if (pct <= 0) return 0;
-  const base =
-    subtotalCents + (taxAppliesToShipping(env) ? shippingCentsAmt : 0);
-  return Math.round((base * pct) / 100);
-}
-
 function taxConfigPublic(env) {
   const pct = taxPercent(env);
   return {
@@ -129,6 +120,74 @@ function taxConfigPublic(env) {
     name: taxName(env),
     appliesToShipping: taxAppliesToShipping(env),
     label: pct > 0 ? `${pct}%` : "None",
+  };
+}
+
+/**
+ * Parse VOLUME_DISCOUNT_TIERS env like "3:5,5:10,10:15"
+ * → [{ minItems: 3, percent: 5 }, ...] sorted by minItems ascending.
+ */
+function parseVolumeDiscountTiers(env) {
+  const raw = (env.VOLUME_DISCOUNT_TIERS || "3:5,5:10,10:15").trim();
+  if (!raw || raw === "none" || raw === "off") return [];
+  const tiers = [];
+  for (const part of raw.split(",")) {
+    const [minS, pctS] = part.trim().split(":");
+    const minItems = Number(minS);
+    const percent = Number(pctS);
+    if (
+      Number.isFinite(minItems) &&
+      minItems >= 1 &&
+      Number.isFinite(percent) &&
+      percent > 0
+    ) {
+      tiers.push({ minItems: Math.round(minItems), percent });
+    }
+  }
+  tiers.sort((a, b) => a.minItems - b.minItems);
+  return tiers;
+}
+
+/** Best volume tier for total unit count (null if none). */
+function volumeDiscountForCount(env, itemCount) {
+  const tiers = parseVolumeDiscountTiers(env);
+  let best = null;
+  for (const t of tiers) {
+    if (itemCount >= t.minItems) best = t;
+  }
+  if (!best) return null;
+  return {
+    minItems: best.minItems,
+    percent: best.percent,
+    name: `Volume discount (${best.minItems}+ items)`,
+    label: `${best.percent}% off`,
+  };
+}
+
+function estimateDiscountCents(env, subtotalCents, itemCount) {
+  const tier = volumeDiscountForCount(env, itemCount);
+  if (!tier || subtotalCents <= 0) return { cents: 0, tier: null };
+  const cents = Math.round((subtotalCents * tier.percent) / 100);
+  return { cents, tier };
+}
+
+/** Tax after merchandise discount (shipping optionally in base). */
+function estimateTaxCents(env, subtotalCents, shippingCentsAmt, discountCents = 0) {
+  const pct = taxPercent(env);
+  if (pct <= 0) return 0;
+  const merch = Math.max(0, subtotalCents - (discountCents || 0));
+  const base = merch + (taxAppliesToShipping(env) ? shippingCentsAmt : 0);
+  return Math.round((base * pct) / 100);
+}
+
+function discountConfigPublic(env) {
+  const tiers = parseVolumeDiscountTiers(env);
+  return {
+    tiers,
+    // Human-readable for the storefront
+    summary: tiers.length
+      ? tiers.map((t) => `${t.minItems}+ items: ${t.percent}% off`).join(" · ")
+      : "None",
   };
 }
 
@@ -299,6 +358,7 @@ async function handleConfig(env) {
     shippingCents: ship,
     shippingLabel: formatMoney(ship, "USD"),
     tax,
+    discounts: discountConfigPublic(env),
     lowStockThreshold: lowStockThreshold(env),
     mto: {
       enabled: mto.enabled,
@@ -380,6 +440,7 @@ async function handleCatalog(env) {
       shippingCents: shippingCents(env),
       shippingLabel: formatMoney(shippingCents(env), "USD"),
       tax: taxConfigPublic(env),
+      discounts: discountConfigPublic(env),
       lowStockThreshold: threshold,
       mto: {
         enabled: mto.enabled,
@@ -744,6 +805,8 @@ function buildOrderEmail({
   lines,
   shipping,
   subtotal,
+  discount,
+  discountLabel,
   tax,
   taxLabel,
   total,
@@ -758,6 +821,7 @@ function buildOrderEmail({
 }) {
   const cur = currency || "USD";
   const hasMto = (totalMto || 0) > 0;
+  const hasDiscount = (discount || 0) > 0;
   const itemLines = lines
     .map((l) => {
       const parts = [];
@@ -790,6 +854,9 @@ function buildOrderEmail({
     itemLines,
     "",
     `Subtotal: ${formatMoney(subtotal ?? 0, cur)}`,
+    hasDiscount
+      ? `Discount (${discountLabel || "Volume"}): -${formatMoney(discount, cur)}`
+      : "",
     `Shipping: ${formatMoney(shipping, cur)} (flat rate)`,
     `Tax (${taxLabel || "Sales Tax"}): ${formatMoney(tax || 0, cur)}`,
     `Total charged: ${formatMoney(total, cur)}`,
@@ -829,6 +896,15 @@ function buildOrderEmail({
       value: formatMoney(subtotal ?? 0, cur),
       inline: true,
     },
+  ];
+  if (hasDiscount) {
+    fields.push({
+      name: discountLabel || "Discount",
+      value: `−${formatMoney(discount, cur)}`,
+      inline: true,
+    });
+  }
+  fields.push(
     {
       name: "Shipping",
       value: `${formatMoney(shipping, cur)} flat`,
@@ -839,8 +915,8 @@ function buildOrderEmail({
       value: formatMoney(tax || 0, cur),
       inline: true,
     },
-    { name: "Total paid", value: `**${totalLabel}**`, inline: true },
-  ];
+    { name: "Total paid", value: `**${totalLabel}**`, inline: true }
+  );
 
   if (hasMto) {
     fields.push({
@@ -955,9 +1031,20 @@ async function handlePay(request, env) {
   }
 
   const subtotal = lines.reduce((sum, line) => sum + line.lineTotal, 0);
+  const itemCount = lines.reduce((n, l) => n + l.quantity, 0);
   const shipping = shippingCents(env);
   const taxCfg = taxConfigPublic(env);
-  const taxEstimate = estimateTaxCents(env, subtotal, shipping);
+  const { cents: discountEstimate, tier: discountTier } = estimateDiscountCents(
+    env,
+    subtotal,
+    itemCount
+  );
+  const taxEstimate = estimateTaxCents(
+    env,
+    subtotal,
+    shipping,
+    discountEstimate
+  );
   if (subtotal <= 0) return error("Invalid cart total");
 
   // Reserve MTO capacity BEFORE charging so two concurrent checkouts can't oversell the pool
@@ -1011,6 +1098,18 @@ async function handlePay(request, env) {
             taxable: taxAppliesToShipping(env),
           },
         ],
+        ...(discountTier
+          ? {
+              discounts: [
+                {
+                  uid: "VOLUME_DISCOUNT",
+                  name: discountTier.name,
+                  percentage: String(discountTier.percent),
+                  scope: "ORDER",
+                },
+              ],
+            }
+          : {}),
         ...(taxCfg.percent > 0
           ? {
               taxes: [
@@ -1077,18 +1176,23 @@ async function handlePay(request, env) {
     return error("Square order missing total", 502);
   }
 
-  // Tax amount from Square order when present
+  // Discount + tax from Square order when present
+  const discountCollected =
+    order.total_discount_money?.amount != null
+      ? order.total_discount_money.amount
+      : discountEstimate;
   const taxCollected =
     order.total_tax_money?.amount != null
       ? order.total_tax_money.amount
       : taxEstimate;
 
-  // Sanity: order total ≈ subtotal + shipping + tax
-  const expected = subtotal + shipping + taxEstimate;
+  // Sanity: order total ≈ subtotal - discount + shipping + tax
+  const expected = subtotal - discountEstimate + shipping + taxEstimate;
   if (Math.abs(orderTotal - expected) > 2) {
     console.warn("Order total mismatch", {
       orderTotal,
       expected,
+      discountCollected,
       taxCollected,
       taxEstimate,
     });
@@ -1155,6 +1259,10 @@ async function handlePay(request, env) {
       lines,
       shipping,
       subtotal,
+      discount: discountCollected,
+      discountLabel: discountTier
+        ? `${discountTier.name} (${discountTier.label})`
+        : null,
       tax: taxCollected,
       taxLabel: `${taxCfg.name} (${taxCfg.label})`,
       total: orderTotal,
@@ -1183,6 +1291,11 @@ async function handlePay(request, env) {
     receiptUrl: payment?.receipt_url || null,
     subtotal,
     shipping,
+    discount: discountCollected,
+    discountLabel: discountTier
+      ? `${discountTier.name} (${discountTier.label})`
+      : null,
+    discountPercent: discountTier?.percent || 0,
     tax: taxCollected,
     taxLabel: `${taxCfg.name} (${taxCfg.label})`,
     taxPercent: taxCfg.percent,

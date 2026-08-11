@@ -16,6 +16,9 @@
   const cartLinesEl = document.getElementById("cart-lines");
   const cartSubtotalEl = document.getElementById("cart-subtotal");
   const cartShippingEl = document.getElementById("cart-shipping");
+  const cartDiscountRow = document.getElementById("cart-discount-row");
+  const cartDiscountEl = document.getElementById("cart-discount");
+  const cartDiscountLabelEl = document.getElementById("cart-discount-label");
   const cartTaxEl = document.getElementById("cart-tax");
   const cartTaxLabelEl = document.getElementById("cart-tax-label");
   const cartTotalEl = document.getElementById("cart-total");
@@ -35,6 +38,15 @@
     name: "Sales Tax",
     appliesToShipping: true,
     label: "6%",
+  };
+  /** @type {{ tiers: { minItems: number, percent: number }[], summary: string }} */
+  let discountInfo = {
+    tiers: [
+      { minItems: 3, percent: 5 },
+      { minItems: 5, percent: 10 },
+      { minItems: 10, percent: 15 },
+    ],
+    summary: "3+ items: 5% off · 5+ items: 10% off · 10+ items: 15% off",
   };
   let mtoInfo = {
     open: true,
@@ -107,19 +119,50 @@
     return "USD";
   }
 
+  function volumeTier() {
+    return Array.isArray(discountInfo.tiers) ? discountInfo.tiers : [];
+  }
+
+  function activeVolumeTier() {
+    const count = cartCount();
+    let best = null;
+    for (const t of volumeTier()) {
+      if (count >= t.minItems) best = t;
+    }
+    return best;
+  }
+
+  function cartDiscountCents() {
+    if (!cart.length) return 0;
+    const tier = activeVolumeTier();
+    if (!tier) return 0;
+    return Math.round((cartSubtotalCents() * tier.percent) / 100);
+  }
+
+  function discountLabelText() {
+    const tier = activeVolumeTier();
+    if (!tier) return "Discount";
+    return `Volume discount (${tier.minItems}+ items, ${tier.percent}% off)`;
+  }
+
   function cartTaxCents() {
     if (!cart.length) return 0;
     const pct = Number(taxInfo.percent) || 0;
     if (pct <= 0) return 0;
+    const merch = Math.max(0, cartSubtotalCents() - cartDiscountCents());
     const base =
-      cartSubtotalCents() +
-      (taxInfo.appliesToShipping !== false ? shippingCents : 0);
+      merch + (taxInfo.appliesToShipping !== false ? shippingCents : 0);
     return Math.round((base * pct) / 100);
   }
 
   function cartGrandTotalCents() {
     if (!cart.length) return 0;
-    return cartSubtotalCents() + shippingCents + cartTaxCents();
+    return (
+      cartSubtotalCents() -
+      cartDiscountCents() +
+      shippingCents +
+      cartTaxCents()
+    );
   }
 
   function taxLabelText() {
@@ -434,6 +477,12 @@
     const sub = cartSubtotalCents();
     const grand = cartGrandTotalCents();
     cartSubtotalEl.textContent = moneyLabel(sub, currency);
+    const disc = cart.length ? cartDiscountCents() : 0;
+    if (cartDiscountRow) {
+      cartDiscountRow.hidden = disc <= 0;
+      if (cartDiscountLabelEl) cartDiscountLabelEl.textContent = discountLabelText();
+      if (cartDiscountEl) cartDiscountEl.textContent = `−${moneyLabel(disc, currency)}`;
+    }
     cartShippingEl.textContent = cart.length
       ? moneyLabel(shippingCents, currency)
       : moneyLabel(0, currency);
@@ -548,8 +597,29 @@
         )}</div>`
       : "";
 
+    const disc = cartDiscountCents();
+    const discRow =
+      disc > 0
+        ? `<div class="modal-summary-row">
+        <span>${escapeHtml(discountLabelText())}</span>
+        <span>−${moneyLabel(disc, currency)}</span>
+      </div>`
+        : "";
+
+    const nextTierHint = (() => {
+      const count = cartCount();
+      const tiers = volumeTier().slice().sort((a, b) => a.minItems - b.minItems);
+      const next = tiers.find((t) => t.minItems > count);
+      if (!next) return "";
+      const need = next.minItems - count;
+      return `<p class="field-hint" style="margin-top:0.65rem">Add ${need} more item${
+        need === 1 ? "" : "s"
+      } for ${next.percent}% off</p>`;
+    })();
+
     paySummary.innerHTML =
       rows +
+      discRow +
       `<div class="modal-summary-row">
         <span>Shipping (flat rate)</span>
         <span>${moneyLabel(shippingCents, currency)}</span>
@@ -561,7 +631,7 @@
       <div class="modal-summary-row total">
         <span>Total</span>
         <span>${moneyLabel(cartGrandTotalCents(), currency)}</span>
-      </div>${mtoNote}`;
+      </div>${mtoNote}${nextTierHint}`;
   }
 
   function escapeHtml(str) {
@@ -808,6 +878,7 @@
       config = await configRes.json();
       shippingCents = Number(config.shippingCents) || 1000;
       if (config.tax) taxInfo = { ...taxInfo, ...config.tax };
+      if (config.discounts) discountInfo = { ...discountInfo, ...config.discounts };
       if (config.mto) mtoInfo = { ...mtoInfo, ...config.mto };
 
       if (config.environment !== "production" && envBadge) {
@@ -825,6 +896,7 @@
         shippingCents = Number(catalog.shippingCents) || shippingCents;
       }
       if (catalog.tax) taxInfo = { ...taxInfo, ...catalog.tax };
+      if (catalog.discounts) discountInfo = { ...discountInfo, ...catalog.discounts };
       if (catalog.mto) mtoInfo = { ...mtoInfo, ...catalog.mto };
       const products = catalog.products || [];
       indexCatalog(products);
