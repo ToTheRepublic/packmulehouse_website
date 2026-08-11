@@ -46,9 +46,12 @@
     remaining: 50,
     promise: "Ships within 1 week (all items together)",
   };
-  /** Latest Square-calculated quote */
-  let quote = null;
-  let quoteTimer = null;
+  /**
+   * Totals for display. Prefer instant local estimate from Square promo list;
+   * optional Square CalculateOrder only to confirm (cart open / checkout).
+   */
+  let quote = null; // last server quote (authoritative when present)
+  let quoteSeq = 0;
   let productsById = new Map();
   let variationsById = new Map();
   let card = null;
@@ -115,48 +118,128 @@
     return "USD";
   }
 
-  function cartDiscountCents() {
-    return quote?.discount || 0;
+  /** Best volume-style promo from Square catalog list (minItems + percent). */
+  function bestLocalPromo() {
+    const count = cartCount();
+    if (!count) return null;
+    const promos = (discountInfo.promos || [])
+      .filter((p) => p.minItems != null && p.percent != null)
+      .slice()
+      .sort((a, b) => a.minItems - b.minItems);
+    let best = null;
+    for (const p of promos) {
+      if (count >= p.minItems) best = p;
+    }
+    return best;
   }
 
-  function discountLabelText() {
-    return quote?.discountLabel || "Discount";
+  /**
+   * Instant local estimate (no network). Matches simple Square volume % rules.
+   * Complex promos (BOGO, fixed $, time windows) may differ until server quote.
+   */
+  function localTotals() {
+    const currency = cartCurrency();
+    const subtotal = cartSubtotalCents();
+    if (!cart.length) {
+      return {
+        subtotal: 0,
+        discount: 0,
+        discountLabel: null,
+        shipping: 0,
+        tax: 0,
+        taxLabel: taxLabelTextFallback(),
+        amount: 0,
+        currency,
+        local: true,
+      };
+    }
+    const promo = bestLocalPromo();
+    const discount = promo
+      ? Math.round((subtotal * Number(promo.percent)) / 100)
+      : 0;
+    const merch = Math.max(0, subtotal - discount);
+    const ship = shippingCents;
+    const taxPct = Number(taxInfo.percent) || 0;
+    const taxBase =
+      merch + (taxInfo.appliesToShipping !== false ? ship : 0);
+    const tax = taxPct > 0 ? Math.round((taxBase * taxPct) / 100) : 0;
+    return {
+      subtotal,
+      discount,
+      discountLabel: promo
+        ? promo.name || `${promo.percent}% off ${promo.minItems}+ items`
+        : null,
+      shipping: ship,
+      tax,
+      taxLabel: taxLabelTextFallback(),
+      amount: merch + ship + tax,
+      currency,
+      local: true,
+    };
   }
 
-  function cartTaxCents() {
-    if (quote && quote.tax != null) return quote.tax;
-    // Fallback estimate until quote returns
-    const pct = Number(taxInfo.percent) || 0;
-    if (pct <= 0 || !cart.length) return 0;
-    const merch = Math.max(0, cartSubtotalCents() - cartDiscountCents());
-    const base =
-      merch + (taxInfo.appliesToShipping !== false ? shippingCents : 0);
-    return Math.round((base * pct) / 100);
-  }
-
-  function cartGrandTotalCents() {
-    if (quote && quote.amount != null) return quote.amount;
-    if (!cart.length) return 0;
-    return (
-      cartSubtotalCents() -
-      cartDiscountCents() +
-      shippingCents +
-      cartTaxCents()
-    );
-  }
-
-  function taxLabelText() {
-    if (quote?.taxLabel) return quote.taxLabel;
+  function taxLabelTextFallback() {
     const name = taxInfo.name || "Sales Tax";
     const label = taxInfo.label || `${taxInfo.percent || 0}%`;
     return `${name} (${label})`;
   }
 
+  /** Display totals: prefer last matching server quote, else local. */
+  function displayTotals() {
+    const local = localTotals();
+    if (!cart.length) return local;
+    // Use server quote only if it still matches current cart item count + subtotal
+    if (
+      quote &&
+      quote.itemCount === cartCount() &&
+      quote.subtotal === local.subtotal
+    ) {
+      return {
+        subtotal: quote.subtotal,
+        discount: quote.discount || 0,
+        discountLabel: quote.discountLabel || null,
+        shipping: quote.shipping != null ? quote.shipping : shippingCents,
+        tax: quote.tax || 0,
+        taxLabel: quote.taxLabel || taxLabelTextFallback(),
+        amount: quote.amount,
+        currency: quote.currency || local.currency,
+        local: false,
+      };
+    }
+    return local;
+  }
+
+  function cartDiscountCents() {
+    return displayTotals().discount || 0;
+  }
+
+  function discountLabelText() {
+    return displayTotals().discountLabel || "Discount";
+  }
+
+  function cartTaxCents() {
+    return displayTotals().tax || 0;
+  }
+
+  function cartGrandTotalCents() {
+    return displayTotals().amount || 0;
+  }
+
+  function taxLabelText() {
+    return displayTotals().taxLabel || taxLabelTextFallback();
+  }
+
+  /**
+   * Confirm totals with Square (network). Used on cart open / checkout, not every click.
+   */
   async function refreshQuote() {
     if (!cart.length) {
       quote = null;
       return null;
     }
+    const seq = ++quoteSeq;
+    const snapSub = cartSubtotalCents();
+    const snapCount = cartCount();
     try {
       const res = await fetch("/api/quote", {
         method: "POST",
@@ -169,27 +252,35 @@
         }),
       });
       const data = await res.json().catch(() => ({}));
+      // Ignore stale responses if cart changed mid-flight
+      if (seq !== quoteSeq) return null;
       if (!res.ok || data.error) {
         console.warn("quote failed", data.error || res.status);
-        quote = null;
         return null;
       }
-      quote = data;
+      // Only adopt if still matches cart
+      if (cartSubtotalCents() === snapSub && cartCount() === snapCount) {
+        quote = data;
+      }
       return data;
     } catch (e) {
       console.warn("quote error", e);
-      quote = null;
       return null;
     }
   }
 
-  function scheduleQuoteAndRender() {
-    clearTimeout(quoteTimer);
-    quoteTimer = setTimeout(async () => {
-      await refreshQuote();
+  /** Instant UI update; optional background Square confirm. */
+  function scheduleQuoteAndRender(opts) {
+    const confirm = !!(opts && opts.confirm);
+    // Always paint immediately from local promo math
+    renderCartLines();
+    if (panelPay && !panelPay.hidden) renderPaySummary();
+    if (!confirm || !cart.length) return;
+    // Soft confirm with Square (does not block UI)
+    refreshQuote().then(() => {
       renderCartLines();
       if (panelPay && !panelPay.hidden) renderPaySummary();
-    }, 200);
+    });
   }
 
   function updateCartBadge() {
@@ -688,12 +779,14 @@
     panelPay.hidden = true;
     checkoutTitle.textContent = "Your cart";
     checkoutSubtitle.textContent =
-      discountInfo.summary && discountInfo.summary !== "None"
+      discountInfo.summary &&
+      discountInfo.summary !== "None" &&
+      !String(discountInfo.summary).startsWith("None")
         ? discountInfo.summary
         : "Add kits, then checkout when you’re ready";
     setStatus("");
-    await refreshQuote();
-    renderCartLines();
+    // Instant totals first, then confirm with Square in background
+    scheduleQuoteAndRender({ confirm: true });
   }
 
   async function showPayStep() {
@@ -710,8 +803,9 @@
     if (sandboxHint) {
       sandboxHint.hidden = config?.environment === "production";
     }
-    await refreshQuote();
+    // Instant paint, then Square-confirm totals before they pay
     renderPaySummary();
+    refreshQuote().then(() => renderPaySummary());
 
     try {
       await ensureCard();
