@@ -254,7 +254,8 @@
       border: 1px solid var(--border);
     }
 
-    .video-wrapper iframe {
+    .video-wrapper iframe,
+    .video-wrapper #yt-player {
       position: absolute;
       top: 0;
       left: 0;
@@ -1037,18 +1038,12 @@
       <h2>X-Frame Drop-In System</h2>
 
       <div class="video-wrapper">
-        <!-- 
-          Autoplay requires muted. 
-          Replace the video ID if you want a different clip.
-          Current: X-Frame — Drop-In Frame Mounting System
+        <!--
+          YouTube IFrame API so we can force captions OFF.
+          (cc_load_policy=0 alone cannot override a viewer’s YouTube account caption preference.)
+          Video: X-Frame — Drop-In Frame Mounting System (5uQ2c1h6dxc)
         -->
-        <iframe
-          src="https://www.youtube.com/embed/5uQ2c1h6dxc?autoplay=1&mute=1&loop=1&playlist=5uQ2c1h6dxc&playsinline=1&rel=0&modestbranding=1&controls=1&cc_load_policy=0&cc_lang_pref=en"
-          title="X-Frame Drop-In Frame Mounting System"
-          allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
-          allowfullscreen
-          loading="lazy"
-        ></iframe>
+        <div id="yt-player" title="X-Frame Drop-In Frame Mounting System"></div>
       </div>
     </div>
   </section>
@@ -1219,5 +1214,72 @@
   <div class="cart-toast" id="cart-toast" role="status" aria-live="polite"></div>
 
   <script src="/checkout.js?v=12" defer></script>
+  <script>
+    // Load YouTube IFrame API and force closed captions off on start / play.
+    (function () {
+      var VIDEO_ID = "5uQ2c1h6dxc";
+      var player = null;
+
+      function forceCaptionsOff() {
+        if (!player || typeof player.unloadModule !== "function") return;
+        try {
+          // Prefer unloading captions module (works for many account prefs)
+          player.unloadModule("captions");
+          player.unloadModule("cc");
+        } catch (e) { /* ignore */ }
+        try {
+          if (typeof player.setOption === "function") {
+            player.setOption("captions", "track", {});
+          }
+        } catch (e2) { /* ignore */ }
+      }
+
+      window.onYouTubeIframeAPIReady = function () {
+        player = new YT.Player("yt-player", {
+          videoId: VIDEO_ID,
+          playerVars: {
+            autoplay: 1,
+            mute: 1,
+            loop: 1,
+            playlist: VIDEO_ID, // required for loop
+            playsinline: 1,
+            rel: 0,
+            modestbranding: 1,
+            controls: 1,
+            cc_load_policy: 0, // do not force captions on
+            iv_load_policy: 3,
+            fs: 1,
+          },
+          events: {
+            onReady: function () {
+              forceCaptionsOff();
+              try {
+                player.mute();
+                player.playVideo();
+              } catch (e) { /* ignore */ }
+            },
+            onStateChange: function (ev) {
+              // Re-assert captions off when playback starts (account prefs often re-enable)
+              if (ev.data === YT.PlayerState.PLAYING || ev.data === YT.PlayerState.BUFFERING) {
+                forceCaptionsOff();
+              }
+            },
+            onApiChange: function () {
+              forceCaptionsOff();
+            },
+          },
+        });
+      };
+
+      // Inject API script once
+      if (!document.getElementById("yt-iframe-api")) {
+        var tag = document.createElement("script");
+        tag.id = "yt-iframe-api";
+        tag.src = "https://www.youtube.com/iframe_api";
+        tag.async = true;
+        document.head.appendChild(tag);
+      }
+    })();
+  </script>
 </body>
 </html>
