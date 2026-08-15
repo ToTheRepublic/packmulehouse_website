@@ -1,0 +1,4 @@
+# Keep folders, ignore mesh/render payloads
+*
+!.gitignore
+!.gitkeep
