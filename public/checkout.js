@@ -30,6 +30,18 @@
   const cartCheckoutBtn = document.getElementById("cart-checkout-btn");
   const toastEl = document.getElementById("cart-toast");
   const sandboxHint = document.getElementById("sandbox-card-hint");
+  const panelConfirm = document.getElementById("panel-confirm");
+  const confirmMessage = document.getElementById("confirm-message");
+  const confirmOrder = document.getElementById("confirm-order");
+  const confirmMto = document.getElementById("confirm-mto");
+  const confirmReceipt = document.getElementById("confirm-receipt");
+  const announcer = document.getElementById("cart-announcer");
+  const US_STATES = new Set(
+    "AL AK AZ AR CA CO CT DE DC FL GA HI ID IL IN IA KS KY LA ME MD MA MI MN MS MO MT NE NV NH NJ NM NY NC ND OH OK OR PA RI SC SD TN TX UT VT VA WA WV WI WY PR VI GU AS MP".split(
+      " "
+    )
+  );
+  const ZIP_RE = /^\d{5}(-\d{4})?$/;
 
   let config = null;
   let shippingCents = 1000;
@@ -43,7 +55,6 @@
   let discountInfo = { promos: [], summary: "" };
   let mtoInfo = {
     open: true,
-    remaining: 50,
     promise: "Ships within 1 week (all items together)",
   };
   /**
@@ -56,6 +67,9 @@
   let variationsById = new Map();
   let card = null;
   let payments = null;
+  let lastFocus = null;
+  /** Reused when a pay request never gets a response, so Square is not charged twice. */
+  let checkoutAttempt = null;
   /** @type {{ variationId: string, quantity: number }[]} */
   let cart = loadCart();
   let toastTimer = null;
@@ -89,12 +103,19 @@
   }
 
   function saveCart() {
+    checkoutAttempt = null;
     try {
       localStorage.setItem(CART_KEY, JSON.stringify(cart));
     } catch {
       /* ignore */
     }
     updateCartBadge();
+  }
+
+  function announce(message) {
+    if (!announcer || !message) return;
+    announcer.textContent = "";
+    announcer.textContent = message;
   }
 
   function cartCount() {
@@ -332,10 +353,11 @@
           ...v,
           productId: p.id,
           productName: p.name,
-          stock: v.stock != null ? v.stock : p.stock,
+          lowStock: v.lowStock != null ? v.lowStock : null,
+          availability: v.availability || p.availability,
           trackInventory:
             v.trackInventory != null ? v.trackInventory : p.trackInventory,
-          maxQty: p.maxQty,
+          maxQty: v.maxQty != null ? v.maxQty : p.maxQty,
         });
       }
     }
@@ -354,9 +376,7 @@
   function lineMaxQty(variation) {
     if (!variation) return 20;
     if (variation.maxQty != null) return Math.max(0, variation.maxQty);
-    if (!variation.trackInventory || variation.stock == null) return 20;
-    const mto = mtoInfo.open ? mtoInfo.remaining : 0;
-    return Math.min(20, Math.max(0, variation.stock) + mto);
+    return 20;
   }
 
   function addToCart(product, quantity) {
@@ -372,7 +392,6 @@
       ...variation,
       maxQty: product.maxQty,
       trackInventory: variation.trackInventory ?? product.trackInventory,
-      stock: variation.stock ?? product.stock,
     });
 
     if (max <= 0) {
@@ -389,11 +408,7 @@
     const nextQty = existing ? existing.quantity + qty : qty;
 
     if (nextQty > max) {
-      showToast(
-        max > (variation.stock || 0)
-          ? `You can order up to ${max} (includes made-to-order)`
-          : `Only ${max} available`
-      );
+      showToast(`You can order up to ${max}`);
       if (existing) {
         existing.quantity = max;
         saveCart();
@@ -409,70 +424,75 @@
     saveCart();
     scheduleQuoteAndRender();
 
-    const stock = variation.stock ?? product.stock;
-    const mtoPart =
-      variation.trackInventory && stock != null
-        ? Math.max(0, nextQty - Math.max(0, stock))
-        : 0;
-    if (mtoPart > 0) {
-      showToast(`Added ${product.name} (${mtoPart} made to order)`);
-    } else {
-      showToast(`Added ${product.name} to cart`);
-    }
+    const shelf =
+      variation.availability === "mto"
+        ? 0
+        : variation.lowStock != null
+          ? variation.lowStock
+          : null;
+    const mtoPart = shelf == null ? 0 : Math.max(0, nextQty - shelf);
+    const added =
+      variation.availability === "mto" || mtoPart > 0
+        ? `Added ${product.name}${mtoPart ? ` (${mtoPart} made to order)` : " (made to order)"}`
+        : `Added ${product.name} to cart`;
+    showToast(added);
   }
 
   function setLineQty(variationId, quantity) {
     const v = variationsById.get(variationId);
     const max = lineMaxQty(v);
     let qty = Math.max(0, Math.min(max || 0, Number(quantity) || 0));
-    if (v && quantity > max) {
-      showToast(
-        max > (v.stock || 0)
-          ? `Max ${max} (stock + made-to-order)`
-          : `Only ${max} available`
-      );
-    }
+    if (v && quantity > max) showToast(`You can order up to ${max}`);
     if (qty <= 0) {
       cart = cart.filter((l) => l.variationId !== variationId);
+      announce("Item removed from cart");
     } else {
       const line = cart.find((l) => l.variationId === variationId);
       if (line) line.quantity = qty;
+      announce(`Quantity ${qty}`);
     }
     saveCart();
     scheduleQuoteAndRender();
   }
 
-  function cartHasMto() {
-    for (const line of cart) {
-      const v = variationsById.get(line.variationId);
-      if (!v || !v.trackInventory || v.stock == null) continue;
-      const shelf = Math.max(0, Number(v.stock) || 0);
-      if (line.quantity > shelf) return true;
-    }
-    return false;
-  }
-
   function cartMtoUnits() {
+    const local = localTotals();
+    if (
+      quote &&
+      quote.itemCount === cartCount() &&
+      quote.subtotal === local.subtotal &&
+      quote.mtoUnits != null
+    ) {
+      return quote.mtoUnits;
+    }
     let n = 0;
     for (const line of cart) {
       const v = variationsById.get(line.variationId);
-      if (!v || !v.trackInventory || v.stock == null) continue;
-      const shelf = Math.max(0, Number(v.stock) || 0);
-      n += Math.max(0, line.quantity - shelf);
+      if (!v || !v.trackInventory) continue;
+      if (v.availability === "mto") n += line.quantity;
+      else if (v.lowStock != null) n += Math.max(0, line.quantity - v.lowStock);
     }
     return n;
   }
 
+  function cartHasMto() {
+    return cartMtoUnits() > 0;
+  }
+
   function removeLine(variationId) {
     cart = cart.filter((l) => l.variationId !== variationId);
+    announce("Item removed from cart");
     saveCart();
     scheduleQuoteAndRender();
   }
 
   function renderProducts(products) {
     if (!products.length) {
-      grid.innerHTML =
-        '<div class="products-status">No products found in the Square catalog yet.</div>';
+      grid.replaceChildren();
+      const status = document.createElement("div");
+      status.className = "products-status";
+      status.textContent = "No products found in the Square catalog yet.";
+      grid.appendChild(status);
       return;
     }
 
@@ -538,6 +558,7 @@
       minus.addEventListener("click", () => {
         pickQty = Math.max(1, pickQty - 1);
         qtyLabel.textContent = String(pickQty);
+        announce(`Quantity ${pickQty} for ${p.name}`);
       });
 
       const plus = document.createElement("button");
@@ -548,6 +569,7 @@
       plus.addEventListener("click", () => {
         pickQty = Math.min(maxQty, pickQty + 1);
         qtyLabel.textContent = String(pickQty);
+        announce(`Quantity ${pickQty} for ${p.name}`);
       });
 
       qty.append(minus, qtyLabel, plus);
@@ -609,8 +631,10 @@
     cartTotalEl.textContent = moneyLabel(cart.length ? grand : 0, currency);
 
     if (!cart.length) {
-      cartLinesEl.innerHTML =
-        '<p class="cart-empty">Your cart is empty. Add an X-Frame kit from the shop.</p>';
+      const empty = document.createElement("p");
+      empty.className = "cart-empty";
+      empty.textContent = "Your cart is empty. Add an X-Frame kit from the shop.";
+      cartLinesEl.appendChild(empty);
       cartCheckoutBtn.disabled = true;
       return;
     }
@@ -618,10 +642,9 @@
     if (cartHasMto()) {
       const banner = document.createElement("div");
       banner.className = "mto-banner";
-      const units = cartMtoUnits();
-      banner.innerHTML = `<strong>Made to order: ${units} unit(s).</strong> ${escapeHtml(
-        mtoInfo.promise || "Ships within 1 week (all items together)"
-      )} · MTO capacity left: ${mtoInfo.remaining ?? "—"}`;
+      const strong = document.createElement("strong");
+      strong.textContent = `Made to order: ${cartMtoUnits()} unit(s). `;
+      banner.append(strong, mtoInfo.promise || "Ships within 1 week (all items together)");
       cartLinesEl.appendChild(banner);
     }
 
@@ -686,81 +709,94 @@
     }
   }
 
-  function renderPaySummary() {
-    const currency = cartCurrency();
-    const rows = cart
-      .map((line) => {
-        const v = variationsById.get(line.variationId);
-        if (!v) return "";
-        let note = "";
-        if (v.trackInventory && v.stock != null && line.quantity > v.stock) {
-          const mto = line.quantity - Math.max(0, v.stock);
-          note = ` <span style="color:var(--teal-bright);font-size:0.8rem">(${mto} MTO)</span>`;
-        }
-        return `<div class="modal-summary-row">
-          <span>${escapeHtml(v.productName)} × ${line.quantity}${note}</span>
-          <span>${moneyLabel(v.amount * line.quantity, v.currency)}</span>
-        </div>`;
-      })
-      .join("");
-
-    const mtoNote = cartHasMto()
-      ? `<div class="mto-banner" style="margin-top:0.75rem;margin-bottom:0"><strong>Made to order:</strong> ${escapeHtml(
-          mtoInfo.promise || "Ships within 1 week (all items together)"
-        )}</div>`
-      : "";
-
-    const disc = cartDiscountCents();
-    const discRow =
-      disc > 0
-        ? `<div class="modal-summary-row">
-        <span>${escapeHtml(discountLabelText())}</span>
-        <span>−${moneyLabel(disc, currency)}</span>
-      </div>`
-        : "";
-
-    const promoHint = (() => {
-      const count = cartCount();
-      const promos = (discountInfo.promos || [])
-        .filter((p) => p.minItems != null && p.percent != null)
-        .slice()
-        .sort((a, b) => a.minItems - b.minItems);
-      const next = promos.find((p) => p.minItems > count);
-      if (!next) return "";
-      const need = next.minItems - count;
-      return `<p class="field-hint" style="margin-top:0.65rem">Add ${need} more item${
-        need === 1 ? "" : "s"
-      } for ${next.percent}% off (Square promo)</p>`;
-    })();
-
-    paySummary.innerHTML =
-      rows +
-      discRow +
-      `<div class="modal-summary-row">
-        <span>Shipping (flat rate)</span>
-        <span>${moneyLabel(shippingCents, currency)}</span>
-      </div>
-      <div class="modal-summary-row">
-        <span>${escapeHtml(taxLabelText())}</span>
-        <span>${moneyLabel(cartTaxCents(), currency)}</span>
-      </div>
-      <div class="modal-summary-row total">
-        <span>Total</span>
-        <span>${moneyLabel(cartGrandTotalCents(), currency)}</span>
-      </div>${mtoNote}${promoHint}`;
+  function summaryRow(label, value, className) {
+    const row = document.createElement("div");
+    row.className = "modal-summary-row" + (className ? ` ${className}` : "");
+    const left = document.createElement("span");
+    left.textContent = label;
+    const right = document.createElement("span");
+    right.textContent = value;
+    row.append(left, right);
+    return row;
   }
 
-  function escapeHtml(str) {
-    return String(str)
-      .replace(/&/g, "&amp;")
-      .replace(/</g, "&lt;")
-      .replace(/>/g, "&gt;")
-      .replace(/"/g, "&quot;");
+  function renderPaySummary() {
+    const currency = cartCurrency();
+    paySummary.replaceChildren();
+
+    for (const line of cart) {
+      const v = variationsById.get(line.variationId);
+      if (!v) continue;
+      let label = `${v.productName} × ${line.quantity}`;
+      if (v.trackInventory && v.availability === "mto") label += " (made to order)";
+      else if (v.trackInventory && v.lowStock != null && line.quantity > v.lowStock) {
+        label += ` (${line.quantity - v.lowStock} MTO)`;
+      }
+      paySummary.appendChild(
+        summaryRow(label, moneyLabel(v.amount * line.quantity, v.currency))
+      );
+    }
+
+    const disc = cartDiscountCents();
+    if (disc > 0) {
+      paySummary.appendChild(
+        summaryRow(discountLabelText(), `−${moneyLabel(disc, currency)}`)
+      );
+    }
+    paySummary.appendChild(
+      summaryRow("Shipping (flat rate)", moneyLabel(shippingCents, currency))
+    );
+    paySummary.appendChild(
+      summaryRow(taxLabelText(), moneyLabel(cartTaxCents(), currency))
+    );
+    paySummary.appendChild(
+      summaryRow("Total", moneyLabel(cartGrandTotalCents(), currency), "total")
+    );
+
+    if (cartHasMto()) {
+      const banner = document.createElement("div");
+      banner.className = "mto-banner";
+      banner.style.marginTop = "0.75rem";
+      banner.style.marginBottom = "0";
+      const strong = document.createElement("strong");
+      strong.textContent = "Made to order: ";
+      banner.append(strong, mtoInfo.promise || "Ships within 1 week (all items together)");
+      paySummary.appendChild(banner);
+    }
+
+    const count = cartCount();
+    const promos = (discountInfo.promos || [])
+      .filter((p) => p.minItems != null && p.percent != null)
+      .slice()
+      .sort((a, b) => a.minItems - b.minItems);
+    const next = promos.find((p) => p.minItems > count);
+    if (next) {
+      const need = next.minItems - count;
+      const hint = document.createElement("p");
+      hint.className = "field-hint";
+      hint.style.marginTop = "0.65rem";
+      hint.textContent = `Add ${need} more item${need === 1 ? "" : "s"} for ${next.percent}% off (Square promo)`;
+      paySummary.appendChild(hint);
+    }
+  }
+
+  function focusableIn(root) {
+    return [...root.querySelectorAll(
+      "a[href], button:not([disabled]), input:not([disabled]), select, textarea, iframe, [tabindex]:not([tabindex='-1'])"
+    )].filter((el) => !el.closest("[hidden]"));
   }
 
   function openModal(step) {
+    lastFocus = document.activeElement;
     modal.hidden = false;
-    requestAnimationFrame(() => modal.classList.add("open"));
+    requestAnimationFrame(() => {
+      modal.classList.add("open");
+      // The overlay stays visibility:hidden until .open is painted.
+      requestAnimationFrame(() => {
+        const closeBtn = document.getElementById("checkout-close");
+        (closeBtn || modal).focus();
+      });
+    });
     document.body.style.overflow = "hidden";
     if (step === "pay") showPayStep();
     else showCartStep();
@@ -769,14 +805,17 @@
   function closeModal() {
     modal.classList.remove("open");
     document.body.style.overflow = "";
+    const returnTo = lastFocus;
     setTimeout(() => {
       modal.hidden = true;
+      if (returnTo && typeof returnTo.focus === "function") returnTo.focus();
     }, 200);
   }
 
   async function showCartStep() {
     panelCart.hidden = false;
     panelPay.hidden = true;
+    if (panelConfirm) panelConfirm.hidden = true;
     checkoutTitle.textContent = "Your cart";
     checkoutSubtitle.textContent =
       discountInfo.summary &&
@@ -796,6 +835,7 @@
     }
     panelCart.hidden = true;
     panelPay.hidden = false;
+    if (panelConfirm) panelConfirm.hidden = true;
     checkoutTitle.textContent = "Checkout";
     checkoutSubtitle.textContent = "Shipping + secure card payment";
     setStatus("");
@@ -806,6 +846,8 @@
     // Instant paint, then Square-confirm totals before they pay
     renderPaySummary();
     refreshQuote().then(() => renderPaySummary());
+    const nameField = document.getElementById("ship-name");
+    if (nameField) nameField.focus();
 
     try {
       await ensureCard();
@@ -906,71 +948,156 @@
     };
   }
 
+  function validateShipping(shipping) {
+    if (
+      !shipping.displayName ||
+      !shipping.email ||
+      !shipping.addressLine1 ||
+      !shipping.city
+    ) {
+      return "Please fill in all required shipping fields.";
+    }
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(shipping.email)) {
+      return "Enter a valid email address.";
+    }
+    if (shipping.country !== "US") return "We only ship to US addresses.";
+    if (!US_STATES.has(shipping.state)) return "Enter a 2-letter US state code.";
+    if (!ZIP_RE.test(shipping.postalCode)) return "Enter a 5-digit ZIP code.";
+    return "";
+  }
+
+  function cartSignature() {
+    return cart.map((l) => `${l.variationId}:${l.quantity}`).join("|");
+  }
+
+  async function fetchAuthoritativeQuote() {
+    const data = await refreshQuote();
+    if (!data || data.amount == null || !data.currency) {
+      throw new Error("Could not confirm the order total. Please try again.");
+    }
+    if (data.itemCount !== cartCount() || data.subtotal !== cartSubtotalCents()) {
+      throw new Error("Your cart changed. Review the total and try again.");
+    }
+    return data;
+  }
+
+  function showConfirmation(data) {
+    panelCart.hidden = true;
+    panelPay.hidden = true;
+    if (panelConfirm) panelConfirm.hidden = false;
+    checkoutTitle.textContent = "Order confirmed";
+    checkoutSubtitle.textContent = "Keep this reference until your order ships";
+    if (confirmMessage) {
+      confirmMessage.textContent = data.amountLabel
+        ? `${data.amountLabel} paid. Thank you — your order is in.`
+        : "Thank you — your order is in.";
+    }
+    if (confirmOrder) confirmOrder.textContent = data.orderId || "";
+    if (confirmMto) {
+      if (data.mtoUnits > 0) {
+        confirmMto.hidden = false;
+        confirmMto.textContent = `${data.mtoUnits} unit(s) are made to order. ${data.mtoPromise || "Ships within 1 week."}`;
+      } else {
+        confirmMto.hidden = true;
+        confirmMto.textContent = "";
+      }
+    }
+    if (confirmReceipt) {
+      if (data.receiptUrl) {
+        confirmReceipt.href = data.receiptUrl;
+        confirmReceipt.hidden = false;
+      } else {
+        confirmReceipt.hidden = true;
+        confirmReceipt.removeAttribute("href");
+      }
+    }
+    setStatus("");
+    const done = document.getElementById("confirm-done");
+    if (done) done.focus();
+    announce("Order confirmed");
+  }
+
   async function onSubmit(event) {
     event.preventDefault();
     if (!cart.length || !card) return;
 
     const shipping = readShipping();
-    if (
-      !shipping.displayName ||
-      !shipping.email ||
-      !shipping.addressLine1 ||
-      !shipping.city ||
-      !shipping.state ||
-      !shipping.postalCode
-    ) {
-      setStatus("Please fill in all required shipping fields.", "error");
+    const shippingError = validateShipping(shipping);
+    if (shippingError) {
+      setStatus(shippingError, "error");
       return;
     }
 
-    const amount = cartGrandTotalCents();
-    const currency = cartCurrency();
+    const signature = cartSignature();
+    if (!checkoutAttempt || checkoutAttempt.signature !== signature) {
+      checkoutAttempt = {
+        id: crypto.randomUUID(),
+        signature,
+        sourceId: null,
+        verificationToken: null,
+      };
+    }
+    const attempt = checkoutAttempt;
 
     payButton.disabled = true;
-    setStatus("Creating order and processing payment…");
+    setStatus("Confirming total…");
 
     try {
-      const sourceId = await tokenize();
-      const verificationToken = await verifyBuyer(sourceId, amount, currency);
+      const quoted = await fetchAuthoritativeQuote();
+      renderPaySummary();
+      if (!attempt.sourceId) {
+        setStatus("Processing payment…");
+        attempt.sourceId = await tokenize();
+      }
+      attempt.verificationToken = await verifyBuyer(
+        attempt.sourceId,
+        quoted.amount,
+        quoted.currency
+      );
 
-      const res = await fetch("/api/pay", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          sourceId,
-          verificationToken,
-          items: cart.map((l) => ({
-            variationId: l.variationId,
-            quantity: l.quantity,
-          })),
-          shippingAddress: shipping,
-          buyerEmail: shipping.email,
-        }),
-      });
+      let res;
+      try {
+        res = await fetch("/api/pay", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            sourceId: attempt.sourceId,
+            verificationToken: attempt.verificationToken,
+            checkoutAttemptId: attempt.id,
+            items: cart.map((l) => ({
+              variationId: l.variationId,
+              quantity: l.quantity,
+            })),
+            shippingAddress: shipping,
+            buyerEmail: shipping.email,
+          }),
+        });
+      } catch (networkErr) {
+        console.error(networkErr);
+        setStatus(
+          "Network error. You can try again — this attempt will not be charged twice.",
+          "error"
+        );
+        payButton.disabled = false;
+        return;
+      }
 
       const data = await res.json().catch(() => ({}));
+      if (res.status === 409 && /already processing/i.test(data.error || "")) {
+        setStatus(data.error, "error");
+        payButton.disabled = false;
+        return;
+      }
+      checkoutAttempt = null;
       if (!res.ok || data.error) {
-        const detail =
-          data.details?.[0]?.detail ||
-          data.details?.[0]?.code ||
-          data.error ||
-          "Payment failed";
-        throw new Error(detail);
+        throw new Error(data.error || "Payment could not be completed. Please try again.");
       }
 
       cart = [];
       saveCart();
       renderCartLines();
+      showConfirmation(data);
 
-      let msg = `Order placed — ${data.amountLabel} charged. Thank you!`;
-      if (data.orderId) msg += ` Order ${data.orderId.slice(0, 8)}…`;
-      if (data.notified === false && data.notifyError) {
-        msg += " (Shop notify failed — order is still paid in Square.)";
-      }
-      setStatus(msg, "success");
-      payButton.disabled = true;
-
-      // Refresh catalog stock after sale
       try {
         const cat = await fetch("/api/catalog").then((r) => r.json());
         if (cat.products) {
@@ -980,8 +1107,6 @@
       } catch {
         /* ignore */
       }
-
-      setTimeout(() => closeModal(), 2800);
     } catch (e) {
       console.error(e);
       setStatus(e.message || "Payment failed", "error");
@@ -1027,9 +1152,10 @@
       renderProducts(products);
     } catch (e) {
       console.error(e);
-      grid.innerHTML = `<div class="products-status error">${
-        e.message || "Failed to load products"
-      }</div>`;
+      const status = document.createElement("div");
+      status.className = "products-status error";
+      status.textContent = e.message || "Failed to load products";
+      grid.replaceChildren(status);
     }
   }
 
@@ -1037,6 +1163,7 @@
   document.getElementById("checkout-close").addEventListener("click", closeModal);
   document.getElementById("cart-continue-btn").addEventListener("click", closeModal);
   document.getElementById("pay-back-btn").addEventListener("click", showCartStep);
+  document.getElementById("confirm-done").addEventListener("click", closeModal);
   cartCheckoutBtn.addEventListener("click", () => {
     if (!cart.length) return;
     showPayStep();
@@ -1046,12 +1173,31 @@
   // Don't close on outside click — too easy to lose checkout progress.
   // Escape: step back from payment → cart; only close fully from the cart view.
   document.addEventListener("keydown", (e) => {
-    if (e.key !== "Escape" || !modal.classList.contains("open")) return;
-    if (panelPay && !panelPay.hidden) {
-      showCartStep();
+    if (!modal.classList.contains("open")) return;
+    if (e.key === "Escape") {
+      if (panelConfirm && !panelConfirm.hidden) {
+        closeModal();
+        return;
+      }
+      if (panelPay && !panelPay.hidden) {
+        showCartStep();
+        return;
+      }
+      closeModal();
       return;
     }
-    closeModal();
+    if (e.key !== "Tab") return;
+    const nodes = focusableIn(modal);
+    if (!nodes.length) return;
+    const first = nodes[0];
+    const last = nodes[nodes.length - 1];
+    if (e.shiftKey && document.activeElement === first) {
+      e.preventDefault();
+      last.focus();
+    } else if (!e.shiftKey && document.activeElement === last) {
+      e.preventDefault();
+      first.focus();
+    }
   });
 
   if (document.readyState === "loading") {
