@@ -32,7 +32,7 @@ printf '%s' "$SQUARE_ACCESS_TOKEN" | npx wrangler secret put SQUARE_ACCESS_TOKEN
 npm run deploy
 ```
 
-Public Square settings live in `wrangler.jsonc` → `vars` (`SQUARE_APPLICATION_ID`, `SQUARE_LOCATION_ID`, `SQUARE_ENVIRONMENT`).
+Public Square settings live in `wrangler.jsonc` → `vars` (`SQUARE_APPLICATION_ID`, `SQUARE_LOCATION_ID`, `SQUARE_ENVIRONMENT`). `TAX_MODE` defaults to `included` (shelf prices already include tax; no separate tax line). Set it to `added` to charge `TAX_PERCENT` on top.
 
 See `docs/GO_LIVE.md` before switching the shop to production.
 

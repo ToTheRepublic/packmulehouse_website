@@ -1,6 +1,6 @@
 # Going live
 
-Sandbox stays the default until every line below is done. Do not change `TAX_PERCENT` or the tax calculation as part of the switch.
+Sandbox stays the default until every line below is done. Leave `TAX_MODE` as `included` unless you decide to add tax on top of shelf prices. Do not change `TAX_PERCENT` as part of the switch.
 
 ## Square
 
@@ -50,6 +50,12 @@ npx wrangler secret put SQUARE_ACCESS_TOKEN    # production token when you cut o
 ## Made-to-order counter
 
 `wrangler.jsonc` adds a Durable Object (`MtoCounter`). The first request copies `enabled` and `remaining` out of the existing `MTO_STATE` KV namespace, then the counter lives in the Durable Object so two checkouts cannot oversell it. Confirm the admin console at `/admin` after deploy and reset the pool if the numbers look wrong.
+
+## Prices and tax
+
+Website prices match in-person market prices. `TAX_MODE` defaults to `included`: the quote, cart, checkout, and Square order have no sales-tax line. The total is subtotal − Square discounts + shipping. The shop shows “Prices include tax” next to prices and the cart and checkout totals.
+
+`TAX_PERCENT` stays `6` so the rate is ready if you switch later. Set `TAX_MODE` to `added` to charge that percent on top of merchandise, and on shipping when `TAX_APPLIES_TO_SHIPPING` is `true`. Included mode tells Square not to apply location tax rules (`auto_apply_taxes: false`) and still applies catalog discounts (`auto_apply_discounts: true`). `/api/config` returns `tax.mode`, `tax.included`, `tax.chargesTax`, and `tax.note`.
 
 ## After the switch
 

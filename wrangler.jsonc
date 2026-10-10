@@ -35,11 +35,14 @@
     "SQUARE_LOCATION_ID": "LKJ4C91RD6JQH",
     "SQUARE_ENVIRONMENT": "sandbox",
     "SHIPPING_CENTS": "1000",
-    // Flat sales-tax percent added at checkout (merchandise, and shipping when
-    // TAX_APPLIES_TO_SHIPPING is true). This is not a live jurisdiction lookup.
+    // Shelf prices already include tax, matching in-person market pricing.
+    // No separate tax is added to quotes, the cart, or the Square order.
+    // Set TAX_MODE to "added" to charge TAX_PERCENT on top of merchandise
+    // (and shipping when TAX_APPLIES_TO_SHIPPING is true). Not a jurisdiction lookup.
+    "TAX_MODE": "included",
     "TAX_PERCENT": "6",
     "TAX_NAME": "Sales Tax",
-    // Tax shipping as well as merchandise (common; set "false" to tax products only)
+    // Used only when TAX_MODE is "added". "false" taxes merchandise only.
     "TAX_APPLIES_TO_SHIPPING": "true",
     // Discounts come from Square Catalog pricing rules (same as POS).
     // Site uses pricing_options.auto_apply_discounts — manage in Square Dashboard.

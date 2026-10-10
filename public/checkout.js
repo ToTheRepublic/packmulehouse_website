@@ -46,10 +46,14 @@
   let config = null;
   let shippingCents = 1000;
   let taxInfo = {
+    mode: "included",
+    included: true,
+    chargesTax: false,
     percent: 6,
     name: "Sales Tax",
     appliesToShipping: true,
-    label: "6%",
+    label: "Included",
+    note: "Prices include tax",
   };
   /** Square catalog promos (display only; amounts from /api/quote) */
   let discountInfo = { promos: [], summary: "" };
@@ -180,10 +184,7 @@
       : 0;
     const merch = Math.max(0, subtotal - discount);
     const ship = shippingCents;
-    const taxPct = Number(taxInfo.percent) || 0;
-    const taxBase =
-      merch + (taxInfo.appliesToShipping !== false ? ship : 0);
-    const tax = taxPct > 0 ? Math.round((taxBase * taxPct) / 100) : 0;
+    const tax = separateTaxCents(merch, ship);
     return {
       subtotal,
       discount,
@@ -192,11 +193,34 @@
         : null,
       shipping: ship,
       tax,
-      taxLabel: taxLabelTextFallback(),
+      taxLabel: chargesTaxNow() ? taxLabelTextFallback() : null,
+      taxNote: pricesIncludeTax() ? taxInfo.note || "Prices include tax" : "",
       amount: merch + ship + tax,
       currency,
       local: true,
     };
+  }
+
+  function pricesIncludeTax() {
+    return taxInfo.mode !== "added";
+  }
+
+  function chargesTaxNow() {
+    return taxInfo.mode === "added" && Number(taxInfo.percent) > 0;
+  }
+
+  function separateTaxCents(merch, ship) {
+    if (!chargesTaxNow()) return 0;
+    const taxBase = merch + (taxInfo.appliesToShipping !== false ? ship : 0);
+    return Math.round((taxBase * Number(taxInfo.percent)) / 100);
+  }
+
+  function syncTaxNote() {
+    const note = document.getElementById("prices-tax-note");
+    if (!note) return;
+    const show = pricesIncludeTax();
+    note.hidden = !show;
+    if (show) note.textContent = taxInfo.note || "Prices include tax";
   }
 
   function taxLabelTextFallback() {
@@ -220,8 +244,9 @@
         discount: quote.discount || 0,
         discountLabel: quote.discountLabel || null,
         shipping: quote.shipping != null ? quote.shipping : shippingCents,
-        tax: quote.tax || 0,
-        taxLabel: quote.taxLabel || taxLabelTextFallback(),
+        tax: chargesTaxNow() ? quote.tax || 0 : 0,
+        taxLabel: chargesTaxNow() ? quote.taxLabel || taxLabelTextFallback() : null,
+        taxNote: pricesIncludeTax() ? quote.taxNote || taxInfo.note || "Prices include tax" : "",
         amount: quote.amount,
         currency: quote.currency || local.currency,
         local: false,
@@ -536,6 +561,12 @@
       const price = document.createElement("div");
       price.className = "product-price";
       price.textContent = p.priceLabel;
+      if (pricesIncludeTax()) {
+        const note = document.createElement("span");
+        note.className = "tax-note";
+        note.textContent = taxInfo.note || "Prices include tax";
+        price.appendChild(note);
+      }
 
       const actions = document.createElement("div");
       actions.className = "product-actions";
@@ -621,12 +652,22 @@
     cartShippingEl.textContent = cart.length
       ? moneyLabel(shippingCents, currency)
       : moneyLabel(0, currency);
-    if (cartTaxLabelEl) cartTaxLabelEl.textContent = taxLabelText();
-    if (cartTaxEl) {
-      cartTaxEl.textContent = moneyLabel(
-        cart.length ? cartTaxCents() : 0,
-        currency
-      );
+    const taxRow = document.getElementById("cart-tax-row");
+    const showTax = chargesTaxNow();
+    if (taxRow) taxRow.hidden = !showTax;
+    if (showTax) {
+      if (cartTaxLabelEl) cartTaxLabelEl.textContent = taxLabelText();
+      if (cartTaxEl) {
+        cartTaxEl.textContent = moneyLabel(
+          cart.length ? cartTaxCents() : 0,
+          currency
+        );
+      }
+    }
+    const cartTaxNote = document.getElementById("cart-tax-note");
+    if (cartTaxNote) {
+      cartTaxNote.hidden = !pricesIncludeTax();
+      if (pricesIncludeTax()) cartTaxNote.textContent = taxInfo.note || "Prices include tax";
     }
     cartTotalEl.textContent = moneyLabel(cart.length ? grand : 0, currency);
 
@@ -746,12 +787,20 @@
     paySummary.appendChild(
       summaryRow("Shipping (flat rate)", moneyLabel(shippingCents, currency))
     );
-    paySummary.appendChild(
-      summaryRow(taxLabelText(), moneyLabel(cartTaxCents(), currency))
-    );
+    if (chargesTaxNow()) {
+      paySummary.appendChild(
+        summaryRow(taxLabelText(), moneyLabel(cartTaxCents(), currency))
+      );
+    }
     paySummary.appendChild(
       summaryRow("Total", moneyLabel(cartGrandTotalCents(), currency), "total")
     );
+    if (pricesIncludeTax()) {
+      const note = document.createElement("p");
+      note.className = "tax-note";
+      note.textContent = taxInfo.note || "Prices include tax";
+      paySummary.appendChild(note);
+    }
 
     if (cartHasMto()) {
       const banner = document.createElement("div");
@@ -1127,6 +1176,7 @@
       config = await configRes.json();
       shippingCents = Number(config.shippingCents) || 1000;
       if (config.tax) taxInfo = { ...taxInfo, ...config.tax };
+      syncTaxNote();
       if (config.discounts) discountInfo = { ...discountInfo, ...config.discounts };
       if (config.mto) mtoInfo = { ...mtoInfo, ...config.mto };
 
@@ -1145,6 +1195,7 @@
         shippingCents = Number(catalog.shippingCents) || shippingCents;
       }
       if (catalog.tax) taxInfo = { ...taxInfo, ...catalog.tax };
+      syncTaxNote();
       if (catalog.discounts) discountInfo = { ...discountInfo, ...catalog.discounts };
       if (catalog.mto) mtoInfo = { ...mtoInfo, ...catalog.mto };
       const products = catalog.products || [];

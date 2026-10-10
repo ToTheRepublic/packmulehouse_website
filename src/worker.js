@@ -37,6 +37,7 @@ import {
   verifyAdminToken,
 } from "./mto.js";
 import { discordSafe, headerSafe, plainSafe, telegramSafe } from "./sanitize.js";
+import { applyOrderTax, taxConfigPublic, totalsFromSquareOrder } from "./tax.js";
 
 export { MtoCounter };
 
@@ -135,40 +136,6 @@ function formatMoney(amountCents, currency = "USD") {
 function shippingCents(env) {
   const n = Number(env.SHIPPING_CENTS);
   return Number.isFinite(n) && n >= 0 ? Math.round(n) : SHIPPING_CENTS;
-}
-
-function taxPercent(env) {
-  const n = Number(env.TAX_PERCENT);
-  return Number.isFinite(n) && n >= 0 ? n : 6;
-}
-
-function taxName(env) {
-  return (env.TAX_NAME || "Sales Tax").trim() || "Sales Tax";
-}
-
-function taxAppliesToShipping(env) {
-  const v = env.TAX_APPLIES_TO_SHIPPING;
-  if (v === "false" || v === "0") return false;
-  return true; // default: tax merchandise + shipping
-}
-
-function taxConfigPublic(env) {
-  const pct = taxPercent(env);
-  return {
-    percent: pct,
-    name: taxName(env),
-    appliesToShipping: taxAppliesToShipping(env),
-    label: pct > 0 ? `${pct}%` : "None",
-  };
-}
-
-/** Tax estimate when Square discount amount is known (or 0). */
-function estimateTaxCents(env, subtotalCents, shippingCentsAmt, discountCents = 0) {
-  const pct = taxPercent(env);
-  if (pct <= 0) return 0;
-  const merch = Math.max(0, subtotalCents - (discountCents || 0));
-  const base = merch + (taxAppliesToShipping(env) ? shippingCentsAmt : 0);
-  return Math.round((base * pct) / 100);
 }
 
 /** List active catalog discounts for display (manage in Square). Cached per request. */
@@ -341,26 +308,12 @@ function buildOrderPayload(env, { lines, currency, shipping, shippingInfo, alloc
         name: "Flat rate shipping",
         amount_money: { amount: shipping, currency },
         calculation_phase: "SUBTOTAL_PHASE",
-        taxable: taxAppliesToShipping(env),
+        taxable: false,
       },
     ],
-    ...(taxCfg.percent > 0
-      ? {
-          taxes: [
-            {
-              uid: "SALES_TAX",
-              name: taxCfg.name,
-              percentage: String(taxCfg.percent),
-              scope: "ORDER",
-            },
-          ],
-        }
-      : {}),
-    // Same catalog pricing rules as POS / Square Online
-    pricing_options: {
-      auto_apply_discounts: true,
-    },
   };
+  const appliedTax = applyOrderTax(env, order);
+  Object.assign(taxCfg, appliedTax);
 
   if (shippingInfo) {
     order.reference_id = `web-${Date.now()}`;
@@ -392,7 +345,8 @@ function buildOrderPayload(env, { lines, currency, shipping, shippingInfo, alloc
         (lines || []).reduce((n, l) => n + (l.inStockQty || 0), 0)
       ),
       ship_together: "true",
-      tax_percent: String(taxCfg.percent),
+      tax_mode: taxCfg.mode,
+      tax_percent: taxCfg.chargesTax ? String(taxCfg.percent) : "0",
     };
   }
 
@@ -845,6 +799,8 @@ function buildOrderEmail({
   discountLabel,
   tax,
   taxLabel,
+  taxIncluded,
+  taxNote,
   total,
   currency,
   shippingInfo,
@@ -894,8 +850,9 @@ function buildOrderEmail({
       ? `Discount (${discountLabel || "Volume"}): -${formatMoney(discount, cur)}`
       : "",
     `Shipping: ${formatMoney(shipping, cur)} (flat rate)`,
-    `Tax (${taxLabel || "Sales Tax"}): ${formatMoney(tax || 0, cur)}`,
+    taxIncluded ? "" : `Tax (${taxLabel || "Sales Tax"}): ${formatMoney(tax || 0, cur)}`,
     `Total charged: ${formatMoney(total, cur)}`,
+    taxIncluded ? taxNote || "Prices include tax" : "",
     hasMto ? `MTO units this order: ${totalMto} · remaining after: ${mtoRemainingAfter}` : "",
     "",
     "Ship to:",
@@ -946,19 +903,25 @@ function buildOrderEmail({
       inline: true,
     });
   }
-  fields.push(
-    {
-      name: "Shipping",
-      value: `${formatMoney(shipping, cur)} flat`,
-      inline: true,
-    },
-    {
+  fields.push({
+    name: "Shipping",
+    value: `${formatMoney(shipping, cur)} flat`,
+    inline: true,
+  });
+  if (!taxIncluded) {
+    fields.push({
       name: taxLabel || "Sales Tax",
       value: formatMoney(tax || 0, cur),
       inline: true,
-    },
-    { name: "Total paid", value: `**${totalLabel}**`, inline: true }
-  );
+    });
+  }
+  fields.push({
+    name: "Total paid",
+    value: taxIncluded
+      ? `**${totalLabel}**\n${taxNote || "Prices include tax"}`
+      : `**${totalLabel}**`,
+    inline: true,
+  });
 
   if (hasMto) {
     fields.push({
@@ -1066,33 +1029,38 @@ async function handleQuote(request, env) {
       method: "POST",
       body: { order },
     });
-    const o = calc.order;
-    const discount = o.total_discount_money?.amount || 0;
-    const tax = o.total_tax_money?.amount || 0;
-    const amount = o.total_money?.amount || 0;
-    const applied = (o.discounts || []).map((d) => ({
-      name: d.name,
-      percentage: d.percentage,
-      amount: d.applied_money?.amount || 0,
-      catalogObjectId: d.catalog_object_id || null,
-    }));
+    const summed = totalsFromSquareOrder(calc.order, { subtotal, shipping, env });
+    if (!summed.matchesSquare) {
+      console.warn("Square quote total does not match subtotal - discount + shipping + tax", {
+        expected: summed.expected,
+        amount: summed.amount,
+        squareTax: calc.order?.total_tax_money?.amount || 0,
+        mode: summed.taxCfg.mode,
+      });
+    }
+    const discount = summed.discount;
+    const tax = summed.tax;
+    const amount = summed.amount;
     return json({
       ok: true,
       subtotal,
       shipping,
       discount,
-      discountLabel: applied.map((a) => a.name).filter(Boolean).join(", ") || null,
+      discountLabel: summed.discountLabel,
       tax,
-      taxLabel: `${taxCfg.name} (${taxCfg.label})`,
+      taxLabel: taxCfg.chargesTax ? `${taxCfg.name} (${taxCfg.label})` : null,
+      taxMode: taxCfg.mode,
+      taxIncluded: taxCfg.included,
+      taxNote: taxCfg.note || null,
       amount,
-      currency,
-      amountLabel: formatMoney(amount, currency),
+      currency: summed.currency || currency,
+      amountLabel: formatMoney(amount, summed.currency || currency),
       shippingLabel: formatMoney(shipping, currency),
       discountLabelMoney: discount
         ? `−${formatMoney(discount, currency)}`
         : null,
-      taxAmountLabel: formatMoney(tax, currency),
-      appliedDiscounts: applied,
+      taxAmountLabel: taxCfg.chargesTax ? formatMoney(tax, currency) : null,
+      appliedDiscounts: summed.appliedDiscounts,
       mtoUnits: allocation.totalMto || 0,
       itemCount: lines.reduce((n, l) => n + l.quantity, 0),
     });
@@ -1206,9 +1174,18 @@ async function handlePay(request, env) {
     return (await failCheckout(null, "Could not complete checkout. Please try again.")).response;
   }
 
-  const discountCollected = order.total_discount_money?.amount || 0;
-  const taxCollected = order.total_tax_money?.amount || 0;
-  const appliedDiscountNames = (order.discounts || []).map((d) => d.name).filter(Boolean);
+  const summed = totalsFromSquareOrder(order, { subtotal, shipping, env });
+  if (!summed.matchesSquare) {
+    console.warn("Square order total does not match subtotal - discount + shipping + tax", {
+      expected: summed.expected,
+      amount: summed.amount,
+      squareTax: order.total_tax_money?.amount || 0,
+      mode: taxCfg.mode,
+    });
+  }
+  const discountCollected = summed.discount;
+  const taxCollected = summed.tax;
+  const appliedDiscountNames = summed.discountLabel ? summed.discountLabel.split(", ") : [];
 
   let payment;
   try {
@@ -1274,13 +1251,16 @@ async function handlePay(request, env) {
       catalogObjectId: d.catalog_object_id || null,
     })),
     tax: taxCollected,
-    taxLabel: `${taxCfg.name} (${taxCfg.label})`,
-    taxPercent: taxCfg.percent,
+    taxLabel: taxCfg.chargesTax ? `${taxCfg.name} (${taxCfg.label})` : null,
+    taxPercent: taxCfg.chargesTax ? taxCfg.percent : 0,
+    taxMode: taxCfg.mode,
+    taxIncluded: taxCfg.included,
+    taxNote: taxCfg.note || null,
     amount: orderTotal,
     currency: order.total_money.currency || currency,
     amountLabel: formatMoney(orderTotal, order.total_money.currency || currency),
     shippingLabel: formatMoney(shipping, currency),
-    taxAmountLabel: formatMoney(taxCollected, currency),
+    taxAmountLabel: taxCfg.chargesTax ? formatMoney(taxCollected, currency) : null,
     items: lines.map((l) => ({
       variationId: l.variationId,
       itemName: l.itemName,
@@ -1305,7 +1285,9 @@ async function handlePay(request, env) {
       discount: discountCollected,
       discountLabel: payload.discountLabel,
       tax: taxCollected,
-      taxLabel: `${taxCfg.name} (${taxCfg.label})`,
+      taxLabel: taxCfg.chargesTax ? `${taxCfg.name} (${taxCfg.label})` : null,
+      taxIncluded: taxCfg.included,
+      taxNote: taxCfg.note || null,
       total: orderTotal,
       currency: payload.currency,
       shippingInfo,
