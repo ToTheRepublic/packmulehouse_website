@@ -5,8 +5,11 @@ import {
   collectTrackedVariationIds,
   decorateVariation,
   itemAllowed,
+  itemCategoryIds,
   presentAtLocation,
+  productSections,
   publicMto,
+  shopCategoryLabels,
   variationTracksInventory,
 } from "../src/catalog.js";
 
@@ -98,6 +101,52 @@ test("catalog filter is a no-op until configured", () => {
   const ids = catalogFilterFromEnv({ SQUARE_ITEM_IDS: "keep-me, also-this" });
   assert.equal(itemAllowed({ id: "keep-me", item_data: {} }, ids), true);
   assert.equal(itemAllowed({ id: "nope", item_data: {} }, ids), false);
+});
+
+test("shop categories match names case-insensitively and ids, in order", () => {
+  assert.deepEqual(
+    shopCategoryLabels({ SHOP_CATEGORIES: "X-Frame, Wind River Canyon, Keychains" }),
+    ["X-Frame", "Wind River Canyon", "Keychains"]
+  );
+  const filter = catalogFilterFromEnv({
+    SHOP_CATEGORIES: "X-Frame, Wind River Canyon, Keychains",
+  });
+  const names = new Map([
+    ["CAT_X", "x-frame"],
+    ["CAT_WIND", "Wind River Canyon"],
+    ["CAT_KEY", "Keychains"],
+    ["CAT_OTHER", "Posters"],
+  ]);
+  const xframe = {
+    id: "item-x",
+    item_data: { category_id: "CAT_X", categories: [{ id: "CAT_KEY" }] },
+  };
+  const posters = { id: "item-p", item_data: { categories: [{ id: "CAT_OTHER" }] } };
+  const byId = { id: "item-id", item_data: { categories: [{ id: "keychains" }] } };
+  assert.equal(itemAllowed(xframe, filter, names), true);
+  assert.equal(itemAllowed(posters, filter, names), false);
+  assert.equal(itemAllowed(byId, filter, names), true);
+  assert.deepEqual(itemCategoryIds(xframe.item_data), ["CAT_X", "CAT_KEY"]);
+
+  const products = [
+    { id: "a", name: "Kit", categoryIds: ["CAT_X"], categoryNames: ["X-Frame"] },
+    { id: "b", name: "Canyon", categoryIds: ["CAT_WIND"], categoryNames: ["Wind River Canyon"] },
+    { id: "c", name: "Both", categoryIds: ["CAT_X", "CAT_KEY"], categoryNames: ["X-Frame", "Keychains"] },
+  ];
+  const sections = productSections(products, [
+    ...filter.shop.slice(0, 1),
+    "Posters",
+    ...filter.shop.slice(1),
+  ]);
+  assert.deepEqual(
+    sections.map((s) => [s.name, s.products.map((p) => p.id)]),
+    [
+      ["X-Frame", ["a", "c"]],
+      ["Wind River Canyon", ["b"]],
+      ["Keychains", ["c"]],
+    ]
+  );
+  assert.equal(productSections(products, []), null);
 });
 
 test("location presence rejects absent and allowlisted locations", () => {

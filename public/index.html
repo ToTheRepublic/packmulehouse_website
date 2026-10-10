@@ -329,6 +329,17 @@
       gap: 1.5rem;
     }
 
+    .product-section + .product-section {
+      margin-top: 2.75rem;
+    }
+
+    .product-section h2 {
+      font-family: "Space Grotesk", sans-serif;
+      font-size: clamp(1.45rem, 3vw, 1.9rem);
+      font-weight: 600;
+      margin: 0 0 1.25rem;
+    }
+
     .product-card {
       background: var(--surface);
       border: 1px solid var(--border);
@@ -1163,15 +1174,17 @@
   <section class="products" id="products">
     <div class="products-header">
       <div>
-        <div class="section-label">The collection</div>
-        <h2>X-Frame Kits <span class="sandbox-badge" id="env-badge" hidden>Sandbox</span></h2>
+        <div class="section-label">The collection <span class="sandbox-badge" id="env-badge" hidden>Sandbox</span></div>
+        <h2 id="products-heading">X-Frame Kits</h2>
         <p class="tax-note" id="prices-tax-note">Prices include tax</p>
         <p class="product-ship" id="shipping-note">$10 flat-rate shipping on US orders</p>
       </div>
     </div>
 
-    <div class="product-grid" id="product-grid" aria-live="polite">
-      <div class="products-status">Loading products…</div>
+    <div id="product-mount" aria-live="polite">
+      <div class="product-grid" id="product-grid">
+        <div class="products-status">Loading products…</div>
+      </div>
     </div>
   </section>
 
@@ -1365,7 +1378,7 @@
   <div class="cart-toast" id="cart-toast" role="status" aria-live="polite"></div>
   <div id="cart-announcer" class="sr-only" aria-live="polite"></div>
 
-  <script src="/checkout.js?v=18" defer></script>
+  <script src="/checkout.js?v=19" defer></script>
   <script src="/youtube.js" defer></script>
 </body>
 </html>

@@ -19,6 +19,10 @@ test("lead times default to 1 week and match category name or id", () => {
   const rules = leadTimeRulesFromEnv({});
   assert.equal(rules.defaultWeeks, 1);
   assert.equal(leadTimeWeeks({ name: "Something else" }, rules), 1);
+  assert.equal(
+    leadTimeWeeks({ name: "Brass tag", categoryNames: ["Keychains"] }, rules),
+    1
+  );
   assert.equal(leadTimeWeeks({ name: "X-Frame Drop-In Kit" }, rules), 1);
   assert.equal(leadTimeWeeks({ name: "Wind River Canyon Overlook" }, rules), 2);
   assert.equal(

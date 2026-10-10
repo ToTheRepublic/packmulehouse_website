@@ -573,17 +573,61 @@
     scheduleQuoteAndRender();
   }
 
-  function renderProducts(products) {
+  function renderCatalog(products, sections) {
+    const heading = document.getElementById("products-heading");
+    const mount = document.getElementById("product-mount");
+    const list = products || [];
+    if (Array.isArray(sections)) {
+      if (heading) heading.hidden = true;
+      if (!mount) return;
+      mount.replaceChildren();
+      if (!sections.length) {
+        const status = document.createElement("div");
+        status.className = "products-status";
+        status.textContent = "No products in the shop categories yet.";
+        mount.appendChild(status);
+        return;
+      }
+      sections.forEach((section, index) => {
+        const block = document.createElement("section");
+        block.className = "product-section";
+        const h2 = document.createElement("h2");
+        h2.id = `shop-category-${index}`;
+        h2.textContent = section.name || "";
+        block.setAttribute("aria-labelledby", h2.id);
+        const gridEl = document.createElement("div");
+        gridEl.className = "product-grid";
+        block.append(h2, gridEl);
+        mount.appendChild(block);
+        fillProductGrid(gridEl, section.products || []);
+      });
+      return;
+    }
+    if (heading) heading.hidden = false;
+    const target = mount || grid;
+    if (mount) {
+      mount.replaceChildren();
+      const gridEl = document.createElement("div");
+      gridEl.className = "product-grid";
+      gridEl.id = "product-grid";
+      mount.appendChild(gridEl);
+      fillProductGrid(gridEl, list);
+      return;
+    }
+    fillProductGrid(target, list);
+  }
+
+  function fillProductGrid(target, products) {
     if (!products.length) {
-      grid.replaceChildren();
+      target.replaceChildren();
       const status = document.createElement("div");
       status.className = "products-status";
       status.textContent = "No products found in the Square catalog yet.";
-      grid.appendChild(status);
+      target.appendChild(status);
       return;
     }
 
-    grid.innerHTML = "";
+    target.replaceChildren();
 
     for (const p of products) {
       const variation =
@@ -699,7 +743,7 @@
       }
 
       article.append(image, body);
-      grid.appendChild(article);
+      target.appendChild(article);
     }
   }
 
@@ -1523,7 +1567,7 @@
         const cat = await fetch("/api/catalog").then((r) => r.json());
         if (cat.products) {
           indexCatalog(cat.products);
-          renderProducts(cat.products);
+          renderCatalog(cat.products, cat.sections);
         }
       } catch {
         /* ignore */
@@ -1601,7 +1645,7 @@
       if (catalog.mto) mtoInfo = { ...mtoInfo, ...catalog.mto };
       const products = catalog.products || [];
       indexCatalog(products);
-      renderProducts(products);
+      renderCatalog(products, catalog.sections);
     } catch (e) {
       console.error(e);
       const status = document.createElement("div");

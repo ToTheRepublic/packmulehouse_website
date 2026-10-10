@@ -63,7 +63,12 @@
     "SITE_ORIGIN": "https://packmulehouse-website.philip-michael-howard.workers.dev",
     // Resend From address. Sandbox can use Resend's onboarding sender; production needs a verified domain.
     "EMAIL_FROM": "Pack Mule House <onboarding@resend.dev>",
-    // Optional catalog allowlist. Leave unset to show the whole Square catalog (sandbox).
+    // Shop sections, in order. Each entry is a Square category name or id.
+    // Names match case-insensitively. Leave unset to list the whole catalog.
+    // Assign items to these categories in the Square dashboard; new items show up
+    // on the next catalog load. Empty categories are omitted.
+    "SHOP_CATEGORIES": "X-Frame, Wind River Canyon, Keychains",
+    // Optional extra allowlists. Ids only. Leave unset unless you need them.
     // "SQUARE_CATEGORY_ID": "",
     // "SQUARE_ITEM_IDS": "",
     // FOMO: only show stock when below this

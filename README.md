@@ -7,7 +7,7 @@ Live temp URL: https://packmulehouse-website.philip-michael-howard.workers.dev
 ## Features
 
 - Static storefront (`public/`)
-- Products & prices loaded live from **Square Catalog** (`GET /api/catalog`)
+- Products & prices loaded live from **Square Catalog** (`GET /api/catalog`), grouped into the categories in `SHOP_CATEGORIES`
 - On-page checkout with the **Square Web Payments SDK** (card, plus Apple Pay, Google Pay, Cash App Pay, and Square gift card when the device supports them)
 - Charges via Worker → Square Payments API (`POST /api/pay`) — server looks up price so clients can't spoof amounts
 
@@ -76,7 +76,9 @@ No real money is charged in sandbox.
 
 ## Updating products / prices
 
-Edit items in the **Square Sandbox** seller dashboard / Catalog. The site reloads prices from the Catalog API (short cache). When you go live, switch `vars` to production Application ID + Location ID, set a production access token secret, and set `SQUARE_ENVIRONMENT` to `production`.
+Edit items in the **Square** seller dashboard / Catalog. The site reloads prices from the Catalog API (short cache). `SHOP_CATEGORIES` in `wrangler.jsonc` is `X-Frame, Wind River Canyon, Keychains`. Assign each product to one of those categories in the dashboard and it shows up under that heading. A category with no items is skipped. Leave `SHOP_CATEGORIES` unset to list the whole catalog. See `docs/GO_LIVE.md` for the sandbox items that may not be in an X-Frame category yet.
+
+When you go live, switch `vars` to production Application ID + Location ID, set a production access token secret, and set `SQUARE_ENVIRONMENT` to `production`.
 
 ## Project layout
 

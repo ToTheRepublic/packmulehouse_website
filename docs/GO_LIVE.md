@@ -13,18 +13,19 @@ Sandbox stays the default until every line below is done. Leave `TAX_MODE` as `i
    printf '%s' "$SQUARE_ACCESS_TOKEN" | npx wrangler secret put SQUARE_ACCESS_TOKEN
    ```
 
-5. In the Square Dashboard, confirm the items you sell on the site are in one category (or note their item ids).
+5. In the Square Dashboard, put each product you sell on the site into one of the shop categories below.
 
-## Catalog filter
+## Shop categories
 
-Production Square has items that are not X-Frame kits. With the filter unset, the site lists the whole catalog.
+`SHOP_CATEGORIES` is the ordered list of Square categories the shop sells. The default is `X-Frame, Wind River Canyon, Keychains`. Each entry is a category name or a category id. Names match without regard to case, so the same list works in sandbox and production. An item can sit in more than one category: Square’s `categories` array and the older `category_id` both count, and the item is listed under every matching section.
 
-Set one of these vars (comma-separated). Leave both unset only in sandbox.
+The storefront renders one section per category, in that order, with the category name as the heading. A category with no items is skipped. If `SHOP_CATEGORIES` is unset, the site lists the whole catalog in one grid, the same as before. `SQUARE_CATEGORY_ID` and `SQUARE_ITEM_IDS` are still optional id allowlists.
 
-- `SQUARE_CATEGORY_ID` — category id from the catalog (matches `category_id`, `categories[].id`, or reporting category)
-- `SQUARE_ITEM_IDS` — catalog item ids to allow
+In the Square Dashboard, create those categories and assign each product. A new item appears on the site after the next catalog load. You do not edit the website to add it. `/api/quote` and `/api/pay` reject any variation whose item is outside the allowed categories.
 
-An item is shown when it matches either list. Checkout rejects anything outside the filter, not only the storefront.
+Lead times stay on `LEAD_TIME_WEEKS` (`X-Frame:1, Wind River Canyon:2`). Keychains are not in that map, so they use `LEAD_TIME_WEEKS_DEFAULT` (1 week).
+
+The live sandbox catalog, with the filter unset, currently lists four items: Peel & Stick, X-Frame 4×6, X-Frame 5×7, and X-Frame 8×10. The public catalog response does not include category assignment, and this repo does not have the sandbox access token, so it was not possible to confirm those items are in a category named X-Frame. With `SHOP_CATEGORIES` set, an item with no matching category is left off the shop and cannot be checked out. If the sandbox shop is empty after deploy, open the sandbox Square Dashboard, create a category named X-Frame, and assign those four items to it. Wind River Canyon and Keychains stay hidden until those categories have at least one item.
 
 ## Domain and email
 

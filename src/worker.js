@@ -11,6 +11,7 @@ import {
   decorateVariation,
   itemAllowed,
   itemCategoryIds,
+  productSections,
   presentAtLocation,
   publicMto,
   variationTracksInventory,
@@ -434,10 +435,10 @@ function mapCatalogToProducts(objects, inventoryMap, env, mto) {
     const item = o.item_data;
     if (!item || item.is_archived) continue;
     if (!presentAtLocation(o, locationId)) continue;
-    if (!itemAllowed(o, filter)) continue;
 
     const catIds = itemCategoryIds(item);
     const catNames = catIds.map((id) => categoryNames.get(id)).filter(Boolean);
+    if (!itemAllowed(o, filter, categoryNames)) continue;
     const weeks = leadTimeWeeks(
       { name: item.name, categoryIds: catIds, categoryNames: catNames },
       leadRules
@@ -501,6 +502,8 @@ function mapCatalogToProducts(objects, inventoryMap, env, mto) {
       mtoOpen: !!mto?.open,
       leadTimeWeeks: weeks,
       leadTimeLabel: mtoLabel,
+      categoryIds: catIds,
+      categoryNames: catNames,
     });
   }
 
@@ -544,10 +547,13 @@ async function handleCatalog(env) {
 
   const mto = await getMtoState(env);
   const products = mapCatalogToProducts(objects, inventoryMap, env, mto);
+  const filter = catalogFilterFromEnv(env);
+  const sections = productSections(products, filter.shop);
 
   return json(
     {
       products,
+      sections,
       count: products.length,
       shippingCents: shippingCents(env),
       shippingLabel: formatMoney(shippingCents(env), "USD"),
@@ -571,6 +577,20 @@ async function getCatalogObject(env, id, cache) {
   const pending = squareFetch(env, `/v2/catalog/object/${encodeURIComponent(id)}`);
   if (cache) cache.objects.set(id, pending);
   return pending;
+}
+
+async function categoryNamesForItem(env, itemData, cache) {
+  const names = new Map();
+  for (const id of itemCategoryIds(itemData)) {
+    try {
+      const data = await getCatalogObject(env, id, cache);
+      const name = data?.object?.category_data?.name;
+      if (name) names.set(id, name);
+    } catch (e) {
+      console.warn("category lookup failed", e?.message || e);
+    }
+  }
+  return names;
 }
 
 async function resolveVariationLine(env, variationId, quantity, cache) {
@@ -607,7 +627,11 @@ async function resolveVariationLine(env, variationId, quantity, cache) {
   if (!presentAtLocation(item, locationId)) {
     throw publicFail("This product is not available at this location", 400);
   }
-  if (!itemAllowed(item, catalogFilterFromEnv(env))) {
+  const filter = catalogFilterFromEnv(env);
+  const categoryNames = filter.shop.length
+    ? await categoryNamesForItem(env, item.item_data, cache)
+    : new Map();
+  if (!itemAllowed(item, filter, categoryNames)) {
     throw publicFail("This product is not available", 400);
   }
 
