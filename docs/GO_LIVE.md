@@ -85,10 +85,13 @@ What does not work until that is done, or at all in some places:
 - Sandbox Apple Pay does not accept Square’s test card numbers. The Apple Wallet has to contain a real card. Square does not charge that card for a sandbox payment.
 - Google Pay and Cash App Pay also stay hidden when the browser or device cannot use them. Cash App Pay’s phone redirect must return to the public HTTPS site. It cannot finish a phone handoff back to `wrangler dev` on `http://127.0.0.1`. A desktop browser can still show the Cash App QR code when the SDK enables it.
 - Card and Square gift card sandbox test values still work without any of the wallet setup.
+- Cash App Pay loads `https://sandbox.kit.cash.app/v1/pay.js` in sandbox and `https://kit.cash.app/v1/pay.js` in production. The worker Content-Security-Policy allows those script, style, and frame hosts, plus `api.cash.app`, `sandbox.api.cash.app`, `pay.cash.app`, `sandbox.pay.cash.app`, and the `cash-f.squarecdn.com` font host. Google Pay’s script is `https://pay.google.com/gp/p/js/pay.js`, with button assets from `https://www.gstatic.com`.
+- A declined card comes back as a short sentence (for example “Your card was declined. Try another card or payment method.”). Square’s decline code stays in the worker log.
+- Sandbox `receipt_url` values look like `https://squareupsandbox.com/receipt/preview/...` and Square’s own docs say receipts are not generated in sandbox, so that link shows their page-not-found. The site still shows the link. Production stores the `receipt_url` Square returns on the payment, which is the live receipt.
 
 ## Policies and lead times
 
-`/shipping`, `/returns`, `/privacy`, `/terms`, and `/contact` are linked from the footer. They are generic small-shop templates with an effective date (`POLICY_EFFECTIVE_DATE`). Review them before you treat them as final.
+`/shipping`, `/returns`, `/privacy`, `/terms`, and `/contact` are linked from the footer. They are generic small-shop templates with an effective date (`POLICY_EFFECTIVE_DATE`). The pages themselves do not say that. An HTML comment on each page, and this checklist, are the reminder to review them before you treat them as final.
 
 `LEAD_TIME_WEEKS` maps a Square category id or name (or part of the item name) to a number of weeks. The default is `LEAD_TIME_WEEKS_DEFAULT` (1). The shop copy starts as `X-Frame:1, Wind River Canyon:2`. Made-to-order product cards and checkout say “Made to order: ships in about N week(s).” In-stock items are described as shipping within a few business days. Shipping pages and the cart use `__SHIPPING_PHRASE__`, built from `SHIPPING_CENTS`, so the words stay on the charge.
 

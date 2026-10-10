@@ -38,6 +38,7 @@ import {
   verifyAdminToken,
 } from "./mto.js";
 import { discordSafe, headerSafe, plainSafe, telegramSafe } from "./sanitize.js";
+import { paymentErrorMessage } from "./payments.js";
 import { applyOrderTax, taxConfigPublic, totalsFromSquareOrder } from "./tax.js";
 import {
   applePayAssociation,
@@ -1183,12 +1184,12 @@ async function handlePay(request, env) {
   const attemptToken = gate.token;
   const mtoAfter = gate.state || allocation.mto;
 
-  async function failCheckout(e, fallback) {
+  async function failCheckout(e, fallback, status) {
     const aborted = await abortCheckout(env, attemptId, attemptToken).catch((err) => {
       console.error("Failed to release checkout reservation", err);
       return { owned: false };
     });
-    return { aborted, response: clientSafeError(e, fallback) };
+    return { aborted, response: clientSafeError(e, fallback, status) };
   }
 
   let order;
@@ -1262,8 +1263,14 @@ async function handlePay(request, env) {
     payment = paid.payment;
     await restoreMtoInventory(env, lines, order.id);
   } catch (e) {
+    // Log Square's code and detail. The client only gets a mapped sentence.
     console.error("Pay order failed", e.details || e.message);
-    const failed = await failCheckout(e, "Payment could not be completed. Please try again.");
+    const friendly = paymentErrorMessage(e?.details);
+    const failed = await failCheckout(
+      e,
+      friendly || "Payment could not be completed. Please try again.",
+      friendly ? 400 : undefined
+    );
     if (failed.aborted?.owned && order?.id) {
       try {
         await squareFetch(env, `/v2/orders/${order.id}`, {
@@ -1289,6 +1296,9 @@ async function handlePay(request, env) {
     orderId: order.id,
     paymentId: payment?.id,
     status: payment?.status,
+    // Square's receipt_url as returned. Production opens squareup.com receipts.
+    // Sandbox returns a squareupsandbox.com/receipt/preview link that Square
+    // does not host (their docs: receipts aren't generated in sandbox).
     receiptUrl: payment?.receipt_url || null,
     subtotal,
     shipping,

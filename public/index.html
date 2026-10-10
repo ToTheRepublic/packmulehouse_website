@@ -526,6 +526,10 @@
       font-size: 0.95rem;
     }
 
+    .modal-summary-row[hidden] {
+      display: none !important;
+    }
+
     .modal-summary-row + .modal-summary-row {
       margin-top: 0.45rem;
     }
@@ -1017,6 +1021,17 @@
       min-height: 44px;
     }
 
+    .wallet-buttons.is-busy,
+    #gift-card-field.is-busy {
+      pointer-events: none;
+      opacity: 0.55;
+    }
+
+    #gift-card-pay:disabled {
+      opacity: 0.55;
+      cursor: not-allowed;
+    }
+
     .pay-divider {
       margin: 0.85rem 0 0.35rem;
       text-align: center;
@@ -1339,6 +1354,7 @@
           <p id="confirm-mto" class="field-hint" hidden></p>
         </div>
         <p><a id="confirm-receipt" href="" target="_blank" rel="noopener">View Square receipt</a></p>
+        <p id="confirm-receipt-note" class="field-hint" hidden></p>
         <div class="modal-actions">
           <button type="button" class="btn btn-primary" id="confirm-done">Done</button>
         </div>
@@ -1349,7 +1365,7 @@
   <div class="cart-toast" id="cart-toast" role="status" aria-live="polite"></div>
   <div id="cart-announcer" class="sr-only" aria-live="polite"></div>
 
-  <script src="/checkout.js?v=16" defer></script>
+  <script src="/checkout.js?v=17" defer></script>
   <script src="/youtube.js" defer></script>
 </body>
 </html>

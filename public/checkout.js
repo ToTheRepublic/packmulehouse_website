@@ -530,6 +530,17 @@
     return variation.lowStock != null && line.quantity > variation.lowStock;
   }
 
+  /**
+   * Same wording as src/payments.js mtoConfirmationLine.
+   * "1 item is made to order." / "2 items are made to order."
+   */
+  function mtoConfirmationLine(count, lead) {
+    const n = Math.max(0, Math.round(Number(count) || 0));
+    const sentence = n === 1 ? "1 item is made to order." : `${n} items are made to order.`;
+    const extra = String(lead || "").trim();
+    return extra ? `${sentence} ${extra}` : sentence;
+  }
+
   function mtoBanner() {
     const banner = document.createElement("div");
     banner.className = "mto-banner";
@@ -715,6 +726,9 @@
           currency
         );
       }
+    } else {
+      if (cartTaxLabelEl) cartTaxLabelEl.textContent = "";
+      if (cartTaxEl) cartTaxEl.textContent = "";
     }
     const cartTaxNote = document.getElementById("cart-tax-note");
     if (cartTaxNote) {
@@ -931,7 +945,7 @@
     checkoutTitle.textContent = "Checkout";
     checkoutSubtitle.textContent = `${shippingPhrase || phraseFromCents(shippingCents)} · US addresses`;
     setStatus("");
-    payButton.disabled = false;
+    setPayBusy(false);
     if (sandboxHint) {
       sandboxHint.hidden = config?.environment === "production";
     }
@@ -999,8 +1013,10 @@
       ".input-container": { borderColor: "#2a2a2a", borderRadius: "10px" },
       ".input-container.is-focus": { borderColor: "#5c8a8a" },
       ".input-container.is-error": { borderColor: "#e07070" },
-      ".message-text": { color: "#9a958a" },
-      ".message-icon": { color: "#9a958a" },
+      // Helper copy such as "Enter the zip code" stays invisible. Real
+      // validation uses .is-error ("Enter a valid ZIP code") and stays visible.
+      ".message-text": { color: "transparent" },
+      ".message-icon": { color: "transparent" },
       ".message-text.is-error": { color: "#e07070" },
       ".message-icon.is-error": { color: "#e07070" },
       input: {
@@ -1015,6 +1031,7 @@
     try {
       card = await payments.card({ style: cardStyle });
       await card.attach("#card-container");
+      bindCardField(card);
     } catch (styleErr) {
       console.warn("Styled card form failed, falling back:", styleErr);
       try {
@@ -1024,7 +1041,42 @@
       }
       card = await payments.card();
       await card.attach("#card-container");
+      bindCardField(card);
     }
+  }
+
+  function bindCardField(instance) {
+    const clearStale = () => {
+      if (payStatus.classList.contains("error")) setStatus("");
+    };
+    try {
+      instance.addEventListener("errorClassRemoved", clearStale);
+      instance.addEventListener("focusClassAdded", clearStale);
+    } catch {
+      /* older SDK builds omit these events */
+    }
+  }
+
+  function setPayBusy(busy) {
+    payInFlight = busy;
+    if (payButton) payButton.disabled = busy;
+    const giftBtn = document.getElementById("gift-card-pay");
+    if (giftBtn) giftBtn.disabled = busy;
+    const back = document.getElementById("pay-back-btn");
+    if (back) back.disabled = busy;
+    const walletsEl = document.getElementById("wallet-buttons");
+    if (walletsEl) {
+      walletsEl.classList.toggle("is-busy", busy);
+      walletsEl.setAttribute("aria-disabled", busy ? "true" : "false");
+    }
+    const giftField = document.getElementById("gift-card-field");
+    if (giftField) giftField.classList.toggle("is-busy", busy);
+    if (form) form.setAttribute("aria-busy", busy ? "true" : "false");
+  }
+
+  /** Card payments need verifyBuyer. Wallets and gift cards verify inside the SDK. */
+  function methodNeedsBuyerVerification(method) {
+    return method === "card";
   }
 
   function tokenFromResult(result, fallback) {
@@ -1129,6 +1181,7 @@
     if (wallets.cashAppPay && !wallets.cashAppPay._pmhBound) {
       wallets.cashAppPay.addEventListener("ontokenization", (event) => {
         const { tokenResult, error } = event.detail || {};
+        if (payInFlight) return;
         if (error || tokenResult?.status !== "OK" || !tokenResult.token) {
           setStatus(error?.message || "Cash App Pay could not be completed.", "error");
           return;
@@ -1167,17 +1220,19 @@
       document.getElementById("ship-name")?.focus();
       return;
     }
+    setPayBusy(true);
     try {
       setStatus("Confirming total…");
-      await fetchAuthoritativeQuote();
+      const quoted = await fetchAuthoritativeQuote();
       renderPaySummary();
       await syncPaymentRequest();
       setStatus("Processing payment…");
       const token = tokenFromResult(await method.tokenize());
-      await payWithSource(token, key);
+      await payWithSource(token, key, { quoted, continueBusy: true });
     } catch (e) {
       console.error(e);
       setStatus(e.message || "Payment could not be completed. Please try again.", "error");
+      setPayBusy(false);
     }
   }
 
@@ -1263,19 +1318,28 @@
       if (data.mtoUnits > 0) {
         confirmMto.hidden = false;
         const lead = (mtoLabels && mtoLabels.length ? mtoLabels.join(" ") : "") || data.mtoPromise || "Made to order: ships in about 1 week";
-        confirmMto.textContent = `${data.mtoUnits} unit(s) are made to order. ${lead}`;
+        confirmMto.textContent = mtoConfirmationLine(data.mtoUnits, lead);
       } else {
         confirmMto.hidden = true;
         confirmMto.textContent = "";
       }
     }
+    const receiptNote = document.getElementById("confirm-receipt-note");
     if (confirmReceipt) {
       if (data.receiptUrl) {
         confirmReceipt.href = data.receiptUrl;
         confirmReceipt.hidden = false;
+        if (receiptNote) {
+          const sandbox = config?.environment !== "production";
+          receiptNote.hidden = !sandbox;
+          receiptNote.textContent = sandbox
+            ? "Sandbox receipt previews usually show Square’s page-not-found. Production uses this same link from Square, and those receipts open."
+            : "";
+        }
       } else {
         confirmReceipt.hidden = true;
         confirmReceipt.removeAttribute("href");
+        if (receiptNote) receiptNote.hidden = true;
       }
     }
     setStatus("");
@@ -1284,19 +1348,59 @@
     announce("Order confirmed");
   }
 
-  async function payWithSource(sourceId, method) {
-    if (payInFlight || !cart.length || !sourceId) return;
+  async function resetPaymentMethods() {
+    const pending = [];
+    const drop = (method) => {
+      if (method && typeof method.destroy === "function") {
+        pending.push(Promise.resolve(method.destroy()).catch(() => {}));
+      }
+    };
+    drop(card);
+    card = null;
+    drop(wallets.applePay);
+    drop(wallets.googlePay);
+    drop(wallets.cashAppPay);
+    drop(wallets.giftCard);
+    wallets.applePay = null;
+    wallets.googlePay = null;
+    wallets.cashAppPay = null;
+    wallets.giftCard = null;
+    cashAppRef = "";
+    paymentRequest = null;
+    await Promise.all(pending);
+    const cardContainer = document.getElementById("card-container");
+    if (cardContainer) cardContainer.innerHTML = "";
+    const giftContainer = document.getElementById("gift-card-container");
+    if (giftContainer) giftContainer.innerHTML = "";
+    const giftField = document.getElementById("gift-card-field");
+    if (giftField) giftField.hidden = true;
+    for (const id of ["apple-pay-button", "google-pay-button", "cash-app-button"]) {
+      const el = document.getElementById(id);
+      if (!el) continue;
+      el.hidden = true;
+      delete el.dataset.bound;
+      el.replaceChildren();
+    }
+    const divider = document.getElementById("pay-divider");
+    if (divider) divider.hidden = true;
+  }
+
+  async function payWithSource(sourceId, method, opts) {
+    const continueBusy = !!(opts && opts.continueBusy);
+    if ((payInFlight && !continueBusy) || !cart.length || !sourceId) return;
     const shipping = readShipping();
     const shippingError = validateShipping(shipping);
     if (shippingError) {
       setStatus(shippingError, "error");
       document.getElementById("ship-name")?.focus();
+      if (continueBusy) setPayBusy(false);
       return;
     }
 
     const attempt = ensureAttempt();
     if (attempt.submitted && attempt.method && attempt.method !== method && !attempt.networkRetry) {
       setStatus("Checkout is already processing. Wait a moment and try again.", "error");
+      if (continueBusy) setPayBusy(false);
       return;
     }
     if (attempt.method === method && attempt.sourceId && attempt.networkRetry) {
@@ -1307,17 +1411,25 @@
       attempt.verificationToken = null;
     }
 
-    payInFlight = true;
-    payButton.disabled = true;
-    const giftBtn = document.getElementById("gift-card-pay");
-    if (giftBtn) giftBtn.disabled = true;
+    setPayBusy(true);
     const mtoLabels = cartMtoLabels();
     setStatus("Confirming total…");
 
     try {
-      const quoted = await fetchAuthoritativeQuote();
+      const quoted =
+        opts?.quoted && opts.quoted.amount != null ? opts.quoted : await fetchAuthoritativeQuote();
+      if (!quoted || quoted.amount == null || !quoted.currency) {
+        throw new Error("Could not confirm the order total. Please try again.");
+      }
+      if (quoted.itemCount !== cartCount() || quoted.subtotal !== cartSubtotalCents()) {
+        throw new Error("Your cart changed. Review the total and try again.");
+      }
       renderPaySummary();
-      if (!attempt.verificationToken) {
+      // Gift cards and wallets already authenticated the buyer. verifyBuyer on a
+      // gift-card token waits on a card challenge that never starts (about 30s)
+      // and then continues. Only cards call it.
+      if (methodNeedsBuyerVerification(method) && !attempt.verificationToken) {
+        setStatus("Verifying your card…");
         attempt.verificationToken = await verifyBuyer(
           attempt.sourceId,
           quoted.amount,
@@ -1325,6 +1437,7 @@
         );
       }
 
+      setStatus("Processing payment…");
       let res;
       try {
         attempt.submitted = true;
@@ -1366,6 +1479,8 @@
       cart = [];
       saveCart();
       renderCartLines();
+      // Drop the card, gift card, and wallet instances. Shipping fields stay.
+      await resetPaymentMethods();
       showConfirmation(data, mtoLabels);
 
       try {
@@ -1381,9 +1496,7 @@
       console.error(e);
       setStatus(e.message || "Payment failed", "error");
     } finally {
-      payInFlight = false;
-      payButton.disabled = false;
-      if (giftBtn) giftBtn.disabled = false;
+      setPayBusy(false);
     }
   }
 
@@ -1395,17 +1508,19 @@
       setStatus(shippingError, "error");
       return;
     }
+    setPayBusy(true);
     try {
-      setStatus("Processing payment…");
+      setStatus("Preparing your card…");
       const attempt = ensureAttempt();
       const token =
         attempt.method === "card" && attempt.sourceId && attempt.networkRetry
           ? attempt.sourceId
           : await tokenize();
-      await payWithSource(token, "card");
+      await payWithSource(token, "card", { continueBusy: true });
     } catch (e) {
       console.error(e);
       setStatus(e.message || "Payment failed", "error");
+      setPayBusy(false);
     }
   }
 
@@ -1468,16 +1583,18 @@
       document.getElementById("ship-name")?.focus();
       return;
     }
+    setPayBusy(true);
     try {
-      setStatus("Processing payment…");
+      setStatus("Reading gift card…");
       const token = tokenFromResult(
         await wallets.giftCard.tokenize(),
         "Gift card could not be read."
       );
-      await payWithSource(token, "giftcard");
+      await payWithSource(token, "giftcard", { continueBusy: true });
     } catch (e) {
       console.error(e);
       setStatus(e.message || "Gift card payment could not be completed.", "error");
+      setPayBusy(false);
     }
   });
 
@@ -1491,6 +1608,20 @@
     showPayStep();
   });
   form.addEventListener("submit", onSubmit);
+  for (const id of [
+    "ship-name",
+    "ship-email",
+    "ship-phone",
+    "ship-line1",
+    "ship-line2",
+    "ship-city",
+    "ship-state",
+    "ship-postal",
+  ]) {
+    document.getElementById(id)?.addEventListener("input", () => {
+      if (payStatus.classList.contains("error")) setStatus("");
+    });
+  }
 
   // Don't close on outside click — too easy to lose checkout progress.
   // Escape: step back from payment → cart; only close fully from the cart view.
@@ -1502,6 +1633,7 @@
         return;
       }
       if (panelPay && !panelPay.hidden) {
+        if (payInFlight) return;
         showCartStep();
         return;
       }
