@@ -1478,6 +1478,15 @@ function isHtmlOrScript(pathname) {
   );
 }
 
+/** Always fetch a full asset body. A 304 would reuse the cached CSP. */
+function unconditionalAssetRequest(url, request) {
+  const headers = new Headers(request.headers);
+  headers.delete("If-None-Match");
+  headers.delete("If-Modified-Since");
+  headers.delete("If-Range");
+  return new Request(url, { method: "GET", headers });
+}
+
 async function serveAsset(request, env, rewritePath) {
   if (!env.ASSETS) {
     return error("Not found", 404);
@@ -1506,7 +1515,7 @@ async function serveAsset(request, env, rewritePath) {
     const u = new URL(request.url);
     u.pathname = p.startsWith("/") ? p : `/${p}`;
     usedPath = u.pathname;
-    const assetRequest = new Request(u.toString(), request);
+    const assetRequest = unconditionalAssetRequest(u.toString(), request);
     res = await env.ASSETS.fetch(assetRequest);
     if (res.status === 200) break;
     // Follow a single assets redirect to another path
@@ -1521,7 +1530,7 @@ async function serveAsset(request, env, rewritePath) {
         for (const c of candidates) {
           const u2 = new URL(request.url);
           u2.pathname = c;
-          const r2 = await env.ASSETS.fetch(new Request(u2.toString(), request));
+          const r2 = await env.ASSETS.fetch(unconditionalAssetRequest(u2.toString(), request));
           if (r2.status === 200) {
             res = r2;
             usedPath = c;
@@ -1535,9 +1544,12 @@ async function serveAsset(request, env, rewritePath) {
 
   if (res && isHtmlOrScript(usedPath) && res.status === 200) {
     const headers = new Headers(res.headers);
-    headers.set("Cache-Control", "no-cache, must-revalidate");
     const isHtml =
       usedPath.endsWith(".html") || usedPath === "/" || usedPath === "/admin";
+    // The document is the CSP. no-store keeps a previous deploy's policy
+    // from sticking to a cached page. There is no <meta> CSP to diverge from.
+    headers.set("Cache-Control", isHtml ? "no-store" : "no-cache, must-revalidate");
+    if (isHtml) headers.set("CDN-Cache-Control", "no-store");
     if (isHtml) {
       headers.set("Content-Type", "text/html; charset=utf-8");
       const html = htmlTokens(await res.text(), env, request);

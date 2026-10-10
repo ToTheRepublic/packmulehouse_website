@@ -76,6 +76,10 @@
   let payInFlight = false;
   const wallets = { applePay: null, googlePay: null, cashAppPay: null, giftCard: null };
   let cashAppRef = "";
+  // Square freezes these objects, so a marker property throws and used to abort
+  // gift-card setup. Track listeners here instead of on the SDK instance.
+  const cashAppBound = new WeakSet();
+  const walletClickBound = new Set();
   let lastFocus = null;
   /** Reused when a pay request never gets a response, so Square is not charged twice. */
   let checkoutAttempt = null;
@@ -1129,10 +1133,34 @@
     if (divider) divider.hidden = !any;
   }
 
+  function bindWalletClick(key, el) {
+    if (!el || walletClickBound.has(key)) return;
+    walletClickBound.add(key);
+    el.addEventListener("click", (event) => {
+      event.preventDefault();
+      startWalletPay(key);
+    });
+  }
+
+  function bindCashApp(method) {
+    if (!method || cashAppBound.has(method)) return;
+    method.addEventListener("ontokenization", (event) => {
+      const { tokenResult, error } = event.detail || {};
+      if (payInFlight) return;
+      if (error || tokenResult?.status !== "OK" || !tokenResult.token) {
+        setStatus(error?.message || "Cash App Pay could not be completed.", "error");
+        return;
+      }
+      payWithSource(tokenResult.token, "cashapp");
+    });
+    cashAppBound.add(method);
+  }
+
   async function mountOne(key, selector, factory) {
     const el = document.querySelector(selector);
-    if (!el || wallets[key]) {
-      if (el && wallets[key]) el.hidden = false;
+    if (!el) return;
+    if (wallets[key]) {
+      el.hidden = false;
       return;
     }
     try {
@@ -1141,13 +1169,7 @@
       await method.attach(selector);
       wallets[key] = method;
       el.hidden = false;
-      if (key !== "cashAppPay" && !el.dataset.bound) {
-        el.dataset.bound = "1";
-        el.addEventListener("click", (event) => {
-          event.preventDefault();
-          startWalletPay(key);
-        });
-      }
+      if (key !== "cashAppPay") bindWalletClick(key, el);
     } catch (e) {
       console.info(`${key} unavailable`, e?.name || e?.message || e);
       el.hidden = true;
@@ -1155,8 +1177,7 @@
     }
   }
 
-  async function mountWallets() {
-    await ensurePayments();
+  async function mountDigitalWallets() {
     await syncPaymentRequest();
     const attempt = ensureAttempt();
     if (wallets.cashAppPay && cashAppRef !== attempt.id) {
@@ -1167,7 +1188,7 @@
       }
       wallets.cashAppPay = null;
       const cashEl = document.getElementById("cash-app-button");
-      if (cashEl) cashEl.dataset.bound = "";
+      if (cashEl) cashEl.replaceChildren();
     }
     await mountOne("applePay", "#apple-pay-button", () => payments.applePay(paymentRequest));
     await mountOne("googlePay", "#google-pay-button", () => payments.googlePay(paymentRequest));
@@ -1177,21 +1198,37 @@
         referenceId: attempt.id.slice(0, 40),
       })
     );
-    if (wallets.cashAppPay) cashAppRef = attempt.id;
-    if (wallets.cashAppPay && !wallets.cashAppPay._pmhBound) {
-      wallets.cashAppPay.addEventListener("ontokenization", (event) => {
-        const { tokenResult, error } = event.detail || {};
-        if (payInFlight) return;
-        if (error || tokenResult?.status !== "OK" || !tokenResult.token) {
-          setStatus(error?.message || "Cash App Pay could not be completed.", "error");
-          return;
-        }
-        payWithSource(tokenResult.token, "cashapp");
-      });
-      wallets.cashAppPay._pmhBound = true;
+    if (!wallets.cashAppPay) return;
+    cashAppRef = attempt.id;
+    try {
+      bindCashApp(wallets.cashAppPay);
+    } catch (e) {
+      console.info("cashAppPay listener skipped", e?.name || e?.message || e);
     }
-    await mountGiftCard();
-    syncWalletChrome();
+  }
+
+  async function mountWallets() {
+    try {
+      await ensurePayments();
+    } catch (e) {
+      console.info("payments unavailable", e?.name || e?.message || e);
+      return;
+    }
+    try {
+      await mountDigitalWallets();
+    } catch (e) {
+      console.info("digital wallets skipped", e?.name || e?.message || e);
+    }
+    try {
+      await mountGiftCard();
+    } catch (e) {
+      console.info("gift card unavailable", e?.name || e?.message || e);
+    }
+    try {
+      syncWalletChrome();
+    } catch (e) {
+      console.info("wallet chrome skipped", e?.name || e?.message || e);
+    }
   }
 
   async function mountGiftCard() {
@@ -1378,7 +1415,6 @@
       const el = document.getElementById(id);
       if (!el) continue;
       el.hidden = true;
-      delete el.dataset.bound;
       el.replaceChildren();
     }
     const divider = document.getElementById("pay-divider");

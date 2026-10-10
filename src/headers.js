@@ -6,6 +6,9 @@
  * does not allow unsafe-inline.
  * img-src https: covers Square catalog photos, which are served from
  * changing image hosts.
+ * This header is the only CSP. The HTML has no meta policy, so the two
+ * cannot disagree. HTML responses are no-store and are not 304s, so a
+ * previous deploy's policy cannot stay attached to a cached document.
  */
 
 export function shouldNoindex(env, hostname) {
@@ -29,7 +32,9 @@ export const CONTENT_SECURITY_POLICY = [
   "font-src 'self' https://fonts.gstatic.com https://square-fonts-production-f.squarecdn.com https://cash-f.squarecdn.com https://d1g145x70srn7h.cloudfront.net data:",
   // https: covers Square catalog photos and Cash App / Google Pay images.
   "img-src 'self' data: blob: https:",
-  "connect-src 'self' https://sandbox.web.squarecdn.com https://web.squarecdn.com https://pci-connect.squareupsandbox.com https://pci-connect.squareup.com https://o160250.ingest.sentry.io https://www.youtube.com https://geoissuer.cardinalcommerce.com https://centinelapi.cardinalcommerce.com https://songbird.cardinalcommerce.com https://songbirdstag.cardinalcommerce.com https://pay.google.com https://payments.google.com https://google.com https://www.google.com https://www.googleapis.com https://api.cash.app https://sandbox.api.cash.app https://pay.cash.app https://sandbox.pay.cash.app https://apple-pay-gateway.apple.com https://apple-pay-gateway-cert.apple.com",
+  // Cash App Pay Kit (sandbox and production) posts experiment data to
+  // api.lab.amplitude.com and can also use Amplitude's api / api2 hosts.
+  "connect-src 'self' https://sandbox.web.squarecdn.com https://web.squarecdn.com https://pci-connect.squareupsandbox.com https://pci-connect.squareup.com https://o160250.ingest.sentry.io https://www.youtube.com https://geoissuer.cardinalcommerce.com https://centinelapi.cardinalcommerce.com https://songbird.cardinalcommerce.com https://songbirdstag.cardinalcommerce.com https://pay.google.com https://payments.google.com https://google.com https://www.google.com https://www.googleapis.com https://api.cash.app https://sandbox.api.cash.app https://pay.cash.app https://sandbox.pay.cash.app https://api.lab.amplitude.com https://api.amplitude.com https://api2.amplitude.com https://apple-pay-gateway.apple.com https://apple-pay-gateway-cert.apple.com",
   // Cash App checkout and enclave iframes are served from the kit host.
   "frame-src 'self' https://sandbox.web.squarecdn.com https://web.squarecdn.com https://pci-connect.squareupsandbox.com https://pci-connect.squareup.com https://www.youtube.com https://www.youtube-nocookie.com https://geoissuer.cardinalcommerce.com https://centinelapi.cardinalcommerce.com https://songbird.cardinalcommerce.com https://songbirdstag.cardinalcommerce.com https://pay.google.com https://payments.google.com https://accounts.google.com https://www.google.com https://sandbox.kit.cash.app https://kit.cash.app https://pay.cash.app https://sandbox.pay.cash.app",
   "worker-src 'self' blob:",

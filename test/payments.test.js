@@ -56,4 +56,30 @@ test("content security policy allows Cash App Pay kit and fonts", () => {
   assert.match(connect, /https:\/\/api\.cash\.app/);
   assert.match(script, /https:\/\/pay\.google\.com/);
   assert.match(script, /https:\/\/www\.gstatic\.com/);
+  assert.match(connect, /https:\/\/api\.lab\.amplitude\.com/);
+  assert.match(connect, /https:\/\/api2\.amplitude\.com/);
+  assert.match(connect, /https:\/\/api\.amplitude\.com/);
+});
+
+test("checkout does not stamp a property onto frozen Square objects", () => {
+  const checkout = fs.readFileSync(new URL("../public/checkout.js", import.meta.url), "utf8");
+  const html = fs.readFileSync(new URL("../public/index.html", import.meta.url), "utf8");
+  assert.match(checkout, /new WeakSet\(\)/);
+  assert.doesNotMatch(checkout, /_pmhBound/);
+  assert.doesNotMatch(html, /http-equiv=["']Content-Security-Policy/i);
+  let calls = 0;
+  const frozen = Object.freeze({
+    addEventListener() {
+      calls += 1;
+    },
+  });
+  assert.throws(() => {
+    frozen._pmhBound = true;
+  });
+  const bound = new WeakSet();
+  frozen.addEventListener();
+  bound.add(frozen);
+  assert.equal(calls, 1);
+  assert.equal(bound.has(frozen), true);
+  assert.equal(Object.hasOwn(frozen, "_pmhBound"), false);
 });
