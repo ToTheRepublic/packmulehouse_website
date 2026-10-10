@@ -57,6 +57,41 @@ Website prices match in-person market prices. `TAX_MODE` defaults to `included`:
 
 `TAX_PERCENT` stays `6` so the rate is ready if you switch later. Set `TAX_MODE` to `added` to charge that percent on top of merchandise, and on shipping when `TAX_APPLIES_TO_SHIPPING` is `true`. Included mode tells Square not to apply location tax rules (`auto_apply_taxes: false`) and still applies catalog discounts (`auto_apply_discounts: true`). `/api/config` returns `tax.mode`, `tax.included`, `tax.chargesTax`, and `tax.note`.
 
+## Apple Pay, Google Pay, Cash App Pay, and gift cards
+
+Checkout already shows a card form. Apple Pay, Google Pay, Cash App Pay, and Square gift card are added with the same Web Payments SDK. Each extra button is created only when the SDK says that method is available, so a browser that cannot use it does not show a dead button. All of them use the same `/api/quote` total, checkout attempt id, stock and made-to-order allocation, and `/api/pay` order as the card.
+
+Apple Pay will not appear until the domain is registered with Square for the same environment you are charging in (sandbox and production are separate).
+
+1. In the [Square Developer Console](https://developer.squareup.com/apps), open the application, switch to Sandbox or Production, and open Apple Pay.
+2. Download the domain association file for that environment. The two files are not interchangeable.
+3. Put the file body in `APPLE_PAY_DOMAIN_ASSOCIATION_SANDBOX` or `APPLE_PAY_DOMAIN_ASSOCIATION_PRODUCTION` in `wrangler.jsonc` (or `APPLE_PAY_DOMAIN_ASSOCIATION` as a single-environment fallback). The worker serves it, with no redirect, at `/.well-known/apple-developer-merchantid-domain-association`.
+4. Register the exact hostname. In the dashboard, add the domain and follow the prompt. Or call RegisterDomain:
+
+   ```bash
+   # Sandbox. Use connect.squareup.com and the production token for the live domain.
+   curl -X POST https://connect.squareupsandbox.com/v2/apple-pay/domains \
+     -H "Authorization: Bearer $SQUARE_ACCESS_TOKEN" \
+     -H "Content-Type: application/json" \
+     -d '{"domain_name":"packmulehouse-website.philip-michael-howard.workers.dev"}'
+   ```
+
+   Register the workers.dev hostname and, later, the production hostname. Apple checks that the well-known URL returns the file.
+
+What does not work until that is done, or at all in some places:
+
+- Until the file is configured and the hostname is registered, the SDK rejects Apple Pay and the button stays hidden.
+- Apple Pay does not work on `http://localhost` or `http://127.0.0.1`. workers.dev is HTTPS, so the transport is fine once the domain is registered.
+- Sandbox Apple Pay does not accept Square’s test card numbers. The Apple Wallet has to contain a real card. Square does not charge that card for a sandbox payment.
+- Google Pay and Cash App Pay also stay hidden when the browser or device cannot use them. Cash App Pay’s phone redirect must return to the public HTTPS site. It cannot finish a phone handoff back to `wrangler dev` on `http://127.0.0.1`. A desktop browser can still show the Cash App QR code when the SDK enables it.
+- Card and Square gift card sandbox test values still work without any of the wallet setup.
+
+## Policies and lead times
+
+`/shipping`, `/returns`, `/privacy`, `/terms`, and `/contact` are linked from the footer. They are generic small-shop templates with an effective date (`POLICY_EFFECTIVE_DATE`). Review them before you treat them as final.
+
+`LEAD_TIME_WEEKS` maps a Square category id or name (or part of the item name) to a number of weeks. The default is `LEAD_TIME_WEEKS_DEFAULT` (1). The shop copy starts as `X-Frame:1, Wind River Canyon:2`. Made-to-order product cards and checkout say “Made to order: ships in about N week(s).” In-stock items are described as shipping within a few business days. Shipping pages and the cart use `__SHIPPING_PHRASE__`, built from `SHIPPING_CENTS`, so the words stay on the charge.
+
 ## After the switch
 
 - `SQUARE_ENVIRONMENT=production` on the custom domain is what removes `X-Robots-Tag: noindex` and the `robots.txt` disallow. `*.workers.dev` stays noindex even in production.

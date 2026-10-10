@@ -45,6 +45,7 @@
 
   let config = null;
   let shippingCents = 1000;
+  let shippingPhrase = "$10 flat-rate shipping";
   let taxInfo = {
     mode: "included",
     included: true,
@@ -71,12 +72,31 @@
   let variationsById = new Map();
   let card = null;
   let payments = null;
+  let paymentRequest = null;
+  let payInFlight = false;
+  const wallets = { applePay: null, googlePay: null, cashAppPay: null, giftCard: null };
+  let cashAppRef = "";
   let lastFocus = null;
   /** Reused when a pay request never gets a response, so Square is not charged twice. */
   let checkoutAttempt = null;
   /** @type {{ variationId: string, quantity: number }[]} */
   let cart = loadCart();
   let toastTimer = null;
+
+  function phraseFromCents(cents) {
+    const amount = Math.round(Number(cents) || 0);
+    const dollars = amount / 100;
+    const text = Number.isInteger(dollars) ? `$${dollars}` : `$${dollars.toFixed(2)}`;
+    return `${text} flat-rate shipping`;
+  }
+
+  function syncShippingCopy() {
+    const phrase = shippingPhrase || phraseFromCents(shippingCents);
+    const label = document.getElementById("cart-shipping-label");
+    if (label) label.textContent = phrase;
+    const note = document.getElementById("shipping-note");
+    if (note) note.textContent = `${phrase} on US orders`;
+  }
 
   function moneyLabel(amountCents, currency) {
     try {
@@ -504,6 +524,33 @@
     return cartMtoUnits() > 0;
   }
 
+  function lineIsMto(line, variation) {
+    if (!variation?.trackInventory) return false;
+    if (variation.availability === "mto") return true;
+    return variation.lowStock != null && line.quantity > variation.lowStock;
+  }
+
+  function mtoBanner() {
+    const banner = document.createElement("div");
+    banner.className = "mto-banner";
+    const count = cartMtoUnits();
+    const labels = cartMtoLabels();
+    const countText = `${count} made-to-order unit${count === 1 ? "" : "s"}.`;
+    banner.textContent = labels.length ? `${countText} ${labels.join(" ")}` : countText;
+    return banner;
+  }
+
+  function cartMtoLabels() {
+    const labels = [];
+    for (const line of cart) {
+      const v = variationsById.get(line.variationId);
+      if (!lineIsMto(line, v)) continue;
+      const label = v.leadTimeLabel || "Made to order: ships in about 1 week";
+      if (!labels.includes(label)) labels.push(label);
+    }
+    return labels;
+  }
+
   function removeLine(variationId) {
     cart = cart.filter((l) => l.variationId !== variationId);
     announce("Item removed from cart");
@@ -567,6 +614,10 @@
         note.textContent = taxInfo.note || "Prices include tax";
         price.appendChild(note);
       }
+      const shipNote = document.createElement("span");
+      shipNote.className = "product-ship";
+      shipNote.textContent = `${shippingPhrase || phraseFromCents(shippingCents)} on US orders`;
+      price.appendChild(shipNote);
 
       const actions = document.createElement("div");
       actions.className = "product-actions";
@@ -627,7 +678,7 @@
           "product-stock" + (p.stockTone ? ` ${p.stockTone}` : "");
         stock.textContent =
           p.stockTone === "mto"
-            ? `${p.stockDisplay} · ships within 1 week`
+            ? p.leadTimeLabel || "Made to order: ships in about 1 week"
             : p.stockDisplay;
         body.appendChild(stock);
       }
@@ -638,6 +689,7 @@
   }
 
   function renderCartLines() {
+    syncShippingCopy();
     cartLinesEl.innerHTML = "";
     const currency = cartCurrency();
     const sub = cartSubtotalCents();
@@ -681,12 +733,7 @@
     }
 
     if (cartHasMto()) {
-      const banner = document.createElement("div");
-      banner.className = "mto-banner";
-      const strong = document.createElement("strong");
-      strong.textContent = `Made to order: ${cartMtoUnits()} unit(s). `;
-      banner.append(strong, mtoInfo.promise || "Ships within 1 week (all items together)");
-      cartLinesEl.appendChild(banner);
+      cartLinesEl.appendChild(mtoBanner());
     }
 
     cartCheckoutBtn.disabled = false;
@@ -785,7 +832,7 @@
       );
     }
     paySummary.appendChild(
-      summaryRow("Shipping (flat rate)", moneyLabel(shippingCents, currency))
+      summaryRow(shippingPhrase || phraseFromCents(shippingCents), moneyLabel(shippingCents, currency))
     );
     if (chargesTaxNow()) {
       paySummary.appendChild(
@@ -803,13 +850,9 @@
     }
 
     if (cartHasMto()) {
-      const banner = document.createElement("div");
-      banner.className = "mto-banner";
+      const banner = mtoBanner();
       banner.style.marginTop = "0.75rem";
       banner.style.marginBottom = "0";
-      const strong = document.createElement("strong");
-      strong.textContent = "Made to order: ";
-      banner.append(strong, mtoInfo.promise || "Ships within 1 week (all items together)");
       paySummary.appendChild(banner);
     }
 
@@ -886,15 +929,19 @@
     panelPay.hidden = false;
     if (panelConfirm) panelConfirm.hidden = true;
     checkoutTitle.textContent = "Checkout";
-    checkoutSubtitle.textContent = "Shipping + secure card payment";
+    checkoutSubtitle.textContent = `${shippingPhrase || phraseFromCents(shippingCents)} · US addresses`;
     setStatus("");
     payButton.disabled = false;
     if (sandboxHint) {
       sandboxHint.hidden = config?.environment === "production";
     }
-    // Instant paint, then Square-confirm totals before they pay
     renderPaySummary();
-    refreshQuote().then(() => renderPaySummary());
+    try {
+      await refreshQuote();
+    } catch {
+      /* local totals stay on screen */
+    }
+    renderPaySummary();
     const nameField = document.getElementById("ship-name");
     if (nameField) nameField.focus();
 
@@ -904,13 +951,39 @@
       console.error(e);
       setStatus(e.message || "Could not load card form", "error");
     }
+    try {
+      await mountWallets();
+    } catch (e) {
+      console.info("wallet setup skipped", e?.message || e);
+    }
   }
 
-  async function ensureCard() {
+  async function ensurePayments() {
     if (!window.Square) throw new Error("Square.js is not loaded");
     if (!payments) {
       payments = window.Square.payments(config.applicationId, config.locationId);
     }
+    return payments;
+  }
+
+  function ensureAttempt() {
+    const signature = cartSignature();
+    if (!checkoutAttempt || checkoutAttempt.signature !== signature) {
+      checkoutAttempt = {
+        id: crypto.randomUUID(),
+        signature,
+        method: null,
+        sourceId: null,
+        verificationToken: null,
+        submitted: false,
+        networkRetry: false,
+      };
+    }
+    return checkoutAttempt;
+  }
+
+  async function ensureCard() {
+    await ensurePayments();
     if (card) {
       try {
         await card.destroy();
@@ -954,14 +1027,158 @@
     }
   }
 
+  function tokenFromResult(result, fallback) {
+    if (result?.status === "OK" && result.token) return result.token;
+    const detail = result?.errors
+      ? result.errors.map((e) => e.message).join(" ")
+      : result?.status;
+    throw new Error(detail || fallback || "Payment could not be started.");
+  }
+
   async function tokenize() {
     if (!card) throw new Error("Card form is not ready. Go back and try again.");
-    const result = await card.tokenize();
-    if (result.status === "OK") return result.token;
-    const detail = result.errors
-      ? result.errors.map((e) => e.message).join(" ")
-      : result.status;
-    throw new Error(detail || "Card tokenization failed");
+    return tokenFromResult(await card.tokenize(), "Card tokenization failed");
+  }
+
+  function paymentRequestDetails() {
+    const totals = displayTotals();
+    return {
+      countryCode: "US",
+      currencyCode: totals.currency || "USD",
+      total: {
+        amount: ((totals.amount || 0) / 100).toFixed(2),
+        label: "Total",
+      },
+    };
+  }
+
+  async function syncPaymentRequest() {
+    await ensurePayments();
+    const details = paymentRequestDetails();
+    if (!paymentRequest) {
+      paymentRequest = payments.paymentRequest(details);
+      return paymentRequest;
+    }
+    if (typeof paymentRequest.update === "function") {
+      paymentRequest.update(details);
+    }
+    return paymentRequest;
+  }
+
+  function syncWalletChrome() {
+    const ids = ["apple-pay-button", "google-pay-button", "cash-app-button"];
+    const anyWallet = ids.some((id) => {
+      const el = document.getElementById(id);
+      return el && !el.hidden;
+    });
+    const gift = document.getElementById("gift-card-field");
+    const any = anyWallet || (gift && !gift.hidden);
+    const divider = document.getElementById("pay-divider");
+    if (divider) divider.hidden = !any;
+  }
+
+  async function mountOne(key, selector, factory) {
+    const el = document.querySelector(selector);
+    if (!el || wallets[key]) {
+      if (el && wallets[key]) el.hidden = false;
+      return;
+    }
+    try {
+      const method = await factory();
+      if (!method) throw new Error("unavailable");
+      await method.attach(selector);
+      wallets[key] = method;
+      el.hidden = false;
+      if (key !== "cashAppPay" && !el.dataset.bound) {
+        el.dataset.bound = "1";
+        el.addEventListener("click", (event) => {
+          event.preventDefault();
+          startWalletPay(key);
+        });
+      }
+    } catch (e) {
+      console.info(`${key} unavailable`, e?.name || e?.message || e);
+      el.hidden = true;
+      wallets[key] = null;
+    }
+  }
+
+  async function mountWallets() {
+    await ensurePayments();
+    await syncPaymentRequest();
+    const attempt = ensureAttempt();
+    if (wallets.cashAppPay && cashAppRef !== attempt.id) {
+      try {
+        await wallets.cashAppPay.destroy();
+      } catch {
+        /* ignore */
+      }
+      wallets.cashAppPay = null;
+      const cashEl = document.getElementById("cash-app-button");
+      if (cashEl) cashEl.dataset.bound = "";
+    }
+    await mountOne("applePay", "#apple-pay-button", () => payments.applePay(paymentRequest));
+    await mountOne("googlePay", "#google-pay-button", () => payments.googlePay(paymentRequest));
+    await mountOne("cashAppPay", "#cash-app-button", () =>
+      payments.cashAppPay(paymentRequest, {
+        redirectURL: `${window.location.origin}${window.location.pathname}`,
+        referenceId: attempt.id.slice(0, 40),
+      })
+    );
+    if (wallets.cashAppPay) cashAppRef = attempt.id;
+    if (wallets.cashAppPay && !wallets.cashAppPay._pmhBound) {
+      wallets.cashAppPay.addEventListener("ontokenization", (event) => {
+        const { tokenResult, error } = event.detail || {};
+        if (error || tokenResult?.status !== "OK" || !tokenResult.token) {
+          setStatus(error?.message || "Cash App Pay could not be completed.", "error");
+          return;
+        }
+        payWithSource(tokenResult.token, "cashapp");
+      });
+      wallets.cashAppPay._pmhBound = true;
+    }
+    await mountGiftCard();
+    syncWalletChrome();
+  }
+
+  async function mountGiftCard() {
+    const field = document.getElementById("gift-card-field");
+    if (!field || wallets.giftCard) {
+      if (field && wallets.giftCard) field.hidden = false;
+      return;
+    }
+    try {
+      const giftCard = await payments.giftCard();
+      await giftCard.attach("#gift-card-container");
+      wallets.giftCard = giftCard;
+      field.hidden = false;
+    } catch (e) {
+      console.info("gift card unavailable", e?.name || e?.message || e);
+      field.hidden = true;
+    }
+  }
+
+  async function startWalletPay(key) {
+    const method = wallets[key];
+    if (!method || payInFlight) return;
+    const shippingError = validateShipping(readShipping());
+    if (shippingError) {
+      setStatus(shippingError, "error");
+      document.getElementById("ship-name")?.focus();
+      return;
+    }
+    try {
+      setStatus("Confirming total…");
+      await fetchAuthoritativeQuote();
+      renderPaySummary();
+      await syncPaymentRequest();
+      setStatus("Processing payment…");
+      const token = tokenFromResult(await method.tokenize());
+      await payWithSource(token, key);
+    } catch (e) {
+      console.error(e);
+      setStatus(e.message || "Payment could not be completed. Please try again.", "error");
+    }
   }
 
   async function verifyBuyer(token, amountCents, currency) {
@@ -1030,7 +1247,7 @@
     return data;
   }
 
-  function showConfirmation(data) {
+  function showConfirmation(data, mtoLabels) {
     panelCart.hidden = true;
     panelPay.hidden = true;
     if (panelConfirm) panelConfirm.hidden = false;
@@ -1045,7 +1262,8 @@
     if (confirmMto) {
       if (data.mtoUnits > 0) {
         confirmMto.hidden = false;
-        confirmMto.textContent = `${data.mtoUnits} unit(s) are made to order. ${data.mtoPromise || "Ships within 1 week."}`;
+        const lead = (mtoLabels && mtoLabels.length ? mtoLabels.join(" ") : "") || data.mtoPromise || "Made to order: ships in about 1 week";
+        confirmMto.textContent = `${data.mtoUnits} unit(s) are made to order. ${lead}`;
       } else {
         confirmMto.hidden = true;
         confirmMto.textContent = "";
@@ -1066,46 +1284,50 @@
     announce("Order confirmed");
   }
 
-  async function onSubmit(event) {
-    event.preventDefault();
-    if (!cart.length || !card) return;
-
+  async function payWithSource(sourceId, method) {
+    if (payInFlight || !cart.length || !sourceId) return;
     const shipping = readShipping();
     const shippingError = validateShipping(shipping);
     if (shippingError) {
       setStatus(shippingError, "error");
+      document.getElementById("ship-name")?.focus();
       return;
     }
 
-    const signature = cartSignature();
-    if (!checkoutAttempt || checkoutAttempt.signature !== signature) {
-      checkoutAttempt = {
-        id: crypto.randomUUID(),
-        signature,
-        sourceId: null,
-        verificationToken: null,
-      };
+    const attempt = ensureAttempt();
+    if (attempt.submitted && attempt.method && attempt.method !== method && !attempt.networkRetry) {
+      setStatus("Checkout is already processing. Wait a moment and try again.", "error");
+      return;
     }
-    const attempt = checkoutAttempt;
+    if (attempt.method === method && attempt.sourceId && attempt.networkRetry) {
+      sourceId = attempt.sourceId;
+    } else {
+      attempt.sourceId = sourceId;
+      attempt.method = method;
+      attempt.verificationToken = null;
+    }
 
+    payInFlight = true;
     payButton.disabled = true;
+    const giftBtn = document.getElementById("gift-card-pay");
+    if (giftBtn) giftBtn.disabled = true;
+    const mtoLabels = cartMtoLabels();
     setStatus("Confirming total…");
 
     try {
       const quoted = await fetchAuthoritativeQuote();
       renderPaySummary();
-      if (!attempt.sourceId) {
-        setStatus("Processing payment…");
-        attempt.sourceId = await tokenize();
+      if (!attempt.verificationToken) {
+        attempt.verificationToken = await verifyBuyer(
+          attempt.sourceId,
+          quoted.amount,
+          quoted.currency
+        );
       }
-      attempt.verificationToken = await verifyBuyer(
-        attempt.sourceId,
-        quoted.amount,
-        quoted.currency
-      );
 
       let res;
       try {
+        attempt.submitted = true;
         res = await fetch("/api/pay", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -1123,18 +1345,17 @@
         });
       } catch (networkErr) {
         console.error(networkErr);
+        attempt.networkRetry = true;
         setStatus(
           "Network error. You can try again — this attempt will not be charged twice.",
           "error"
         );
-        payButton.disabled = false;
         return;
       }
 
       const data = await res.json().catch(() => ({}));
       if (res.status === 409 && /already processing/i.test(data.error || "")) {
         setStatus(data.error, "error");
-        payButton.disabled = false;
         return;
       }
       checkoutAttempt = null;
@@ -1145,7 +1366,7 @@
       cart = [];
       saveCart();
       renderCartLines();
-      showConfirmation(data);
+      showConfirmation(data, mtoLabels);
 
       try {
         const cat = await fetch("/api/catalog").then((r) => r.json());
@@ -1159,7 +1380,32 @@
     } catch (e) {
       console.error(e);
       setStatus(e.message || "Payment failed", "error");
+    } finally {
+      payInFlight = false;
       payButton.disabled = false;
+      if (giftBtn) giftBtn.disabled = false;
+    }
+  }
+
+  async function onSubmit(event) {
+    event.preventDefault();
+    if (!cart.length || !card || payInFlight) return;
+    const shippingError = validateShipping(readShipping());
+    if (shippingError) {
+      setStatus(shippingError, "error");
+      return;
+    }
+    try {
+      setStatus("Processing payment…");
+      const attempt = ensureAttempt();
+      const token =
+        attempt.method === "card" && attempt.sourceId && attempt.networkRetry
+          ? attempt.sourceId
+          : await tokenize();
+      await payWithSource(token, "card");
+    } catch (e) {
+      console.error(e);
+      setStatus(e.message || "Payment failed", "error");
     }
   }
 
@@ -1175,6 +1421,8 @@
       if (!configRes.ok) throw new Error("Could not load payment config");
       config = await configRes.json();
       shippingCents = Number(config.shippingCents) || 1000;
+      if (config.shippingPhrase) shippingPhrase = config.shippingPhrase;
+      syncShippingCopy();
       if (config.tax) taxInfo = { ...taxInfo, ...config.tax };
       syncTaxNote();
       if (config.discounts) discountInfo = { ...discountInfo, ...config.discounts };
@@ -1194,6 +1442,8 @@
       if (catalog.shippingCents != null) {
         shippingCents = Number(catalog.shippingCents) || shippingCents;
       }
+      if (catalog.shippingPhrase) shippingPhrase = catalog.shippingPhrase;
+      syncShippingCopy();
       if (catalog.tax) taxInfo = { ...taxInfo, ...catalog.tax };
       syncTaxNote();
       if (catalog.discounts) discountInfo = { ...discountInfo, ...catalog.discounts };
@@ -1209,6 +1459,27 @@
       grid.replaceChildren(status);
     }
   }
+
+  document.getElementById("gift-card-pay")?.addEventListener("click", async () => {
+    if (!wallets.giftCard || payInFlight) return;
+    const shippingError = validateShipping(readShipping());
+    if (shippingError) {
+      setStatus(shippingError, "error");
+      document.getElementById("ship-name")?.focus();
+      return;
+    }
+    try {
+      setStatus("Processing payment…");
+      const token = tokenFromResult(
+        await wallets.giftCard.tokenize(),
+        "Gift card could not be read."
+      );
+      await payWithSource(token, "giftcard");
+    } catch (e) {
+      console.error(e);
+      setStatus(e.message || "Gift card payment could not be completed.", "error");
+    }
+  });
 
   document.getElementById("cart-open").addEventListener("click", () => openModal("cart"));
   document.getElementById("checkout-close").addEventListener("click", closeModal);

@@ -8,7 +8,7 @@ Live temp URL: https://packmulehouse-website.philip-michael-howard.workers.dev
 
 - Static storefront (`public/`)
 - Products & prices loaded live from **Square Catalog** (`GET /api/catalog`)
-- On-page checkout with **Square Web Payments SDK** (no redirect)
+- On-page checkout with the **Square Web Payments SDK** (card, plus Apple Pay, Google Pay, Cash App Pay, and Square gift card when the device supports them)
 - Charges via Worker → Square Payments API (`POST /api/pay`) — server looks up price so clients can't spoof amounts
 
 ## Local development

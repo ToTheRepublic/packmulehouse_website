@@ -10,6 +10,7 @@ import {
   collectTrackedVariationIds,
   decorateVariation,
   itemAllowed,
+  itemCategoryIds,
   presentAtLocation,
   publicMto,
   variationTracksInventory,
@@ -38,6 +39,14 @@ import {
 } from "./mto.js";
 import { discordSafe, headerSafe, plainSafe, telegramSafe } from "./sanitize.js";
 import { applyOrderTax, taxConfigPublic, totalsFromSquareOrder } from "./tax.js";
+import {
+  applePayAssociation,
+  flatRateShippingPhrase,
+  leadTimeLabel,
+  leadTimePolicySentence,
+  leadTimeRulesFromEnv,
+  leadTimeWeeks,
+} from "./shipping.js";
 
 export { MtoCounter };
 
@@ -138,6 +147,28 @@ function shippingCents(env) {
   return Number.isFinite(n) && n >= 0 ? Math.round(n) : SHIPPING_CENTS;
 }
 
+function publicLeadTimes(env) {
+  const rules = leadTimeRulesFromEnv(env);
+  return {
+    defaultWeeks: rules.defaultWeeks,
+    rules: rules.rules,
+    policy: leadTimePolicySentence(rules),
+  };
+}
+
+function htmlTokens(html, env, request) {
+  const origin = String(env.SITE_ORIGIN || new URL(request.url).origin).replace(/\/$/, "");
+  const phrase = flatRateShippingPhrase(shippingCents(env));
+  const effective = String(env.POLICY_EFFECTIVE_DATE || "October 10, 2026").trim();
+  const email = notifyEmail(env);
+  return html
+    .replaceAll("__SITE_ORIGIN__", origin)
+    .replaceAll("__SHIPPING_PHRASE__", phrase)
+    .replaceAll("__LEAD_TIME_POLICY__", publicLeadTimes(env).policy)
+    .replaceAll("__POLICY_EFFECTIVE__", effective)
+    .replaceAll("__CONTACT_EMAIL__", email);
+}
+
 /** List active catalog discounts for display (manage in Square). Cached per request. */
 async function listCatalogDiscounts(env, cache) {
   if (cache) {
@@ -212,7 +243,7 @@ async function listCatalog(env) {
   const objects = [];
   let cursor;
   do {
-    const qs = new URLSearchParams({ types: "ITEM,IMAGE" });
+    const qs = new URLSearchParams({ types: "ITEM,IMAGE,CATEGORY" });
     if (cursor) qs.set("cursor", cursor);
     const data = await squareFetch(env, `/v2/catalog/list?${qs}`);
     objects.push(...(data.objects || []));
@@ -305,7 +336,7 @@ function buildOrderPayload(env, { lines, currency, shipping, shippingInfo, alloc
     line_items: lineItems,
     service_charges: [
       {
-        name: "Flat rate shipping",
+        name: flatRateShippingPhrase(shipping),
         amount_money: { amount: shipping, currency },
         calculation_phase: "SUBTOTAL_PHASE",
         taxable: false,
@@ -383,11 +414,15 @@ function summarizeSquareOrder(order, fallback = {}) {
 
 function mapCatalogToProducts(objects, inventoryMap, env, mto) {
   const images = new Map();
+  const categoryNames = new Map();
   for (const o of objects) {
     if (o.type === "IMAGE" && o.image_data?.url) {
       images.set(o.id, o.image_data.url);
+    } else if (o.type === "CATEGORY" && o.category_data?.name) {
+      categoryNames.set(o.id, o.category_data.name);
     }
   }
+  const leadRules = leadTimeRulesFromEnv(env);
 
   const locationId = env.SQUARE_LOCATION_ID;
   const filter = catalogFilterFromEnv(env);
@@ -400,6 +435,13 @@ function mapCatalogToProducts(objects, inventoryMap, env, mto) {
     if (!presentAtLocation(o, locationId)) continue;
     if (!itemAllowed(o, filter)) continue;
 
+    const catIds = itemCategoryIds(item);
+    const catNames = catIds.map((id) => categoryNames.get(id)).filter(Boolean);
+    const weeks = leadTimeWeeks(
+      { name: item.name, categoryIds: catIds, categoryNames: catNames },
+      leadRules
+    );
+    const mtoLabel = leadTimeLabel(weeks);
     const variations = [];
     for (const v of item.variations || []) {
       if (v.is_deleted) continue;
@@ -416,8 +458,8 @@ function mapCatalogToProducts(objects, inventoryMap, env, mto) {
           : 0
         : null;
 
-      variations.push(
-        decorateVariation(
+      variations.push({
+        ...decorateVariation(
           {
             id: v.id,
             name: vd.name || "Standard",
@@ -429,8 +471,10 @@ function mapCatalogToProducts(objects, inventoryMap, env, mto) {
           },
           mto,
           threshold
-        )
-      );
+        ),
+        leadTimeWeeks: weeks,
+        leadTimeLabel: mtoLabel,
+      });
     }
     if (!variations.length) continue;
 
@@ -454,6 +498,8 @@ function mapCatalogToProducts(objects, inventoryMap, env, mto) {
       availability: primary.availability,
       maxQty: primary.maxQty,
       mtoOpen: !!mto?.open,
+      leadTimeWeeks: weeks,
+      leadTimeLabel: mtoLabel,
     });
   }
 
@@ -473,6 +519,8 @@ async function handleConfig(env) {
     environment: env.SQUARE_ENVIRONMENT || "sandbox",
     shippingCents: ship,
     shippingLabel: formatMoney(ship, "USD"),
+    shippingPhrase: flatRateShippingPhrase(ship),
+    leadTimes: publicLeadTimes(env),
     tax,
     discounts,
     lowStockThreshold: lowStockThreshold(env),
@@ -502,6 +550,8 @@ async function handleCatalog(env) {
       count: products.length,
       shippingCents: shippingCents(env),
       shippingLabel: formatMoney(shippingCents(env), "USD"),
+      shippingPhrase: flatRateShippingPhrase(shippingCents(env)),
+      leadTimes: publicLeadTimes(env),
       tax: taxConfigPublic(env),
       discounts: await listCatalogDiscounts(env, cache),
       lowStockThreshold: lowStockThreshold(env),
@@ -849,7 +899,7 @@ function buildOrderEmail({
     hasDiscount
       ? `Discount (${discountLabel || "Volume"}): -${formatMoney(discount, cur)}`
       : "",
-    `Shipping: ${formatMoney(shipping, cur)} (flat rate)`,
+    `${flatRateShippingPhrase(shipping)} (US orders)`,
     taxIncluded ? "" : `Tax (${taxLabel || "Sales Tax"}): ${formatMoney(tax || 0, cur)}`,
     `Total charged: ${formatMoney(total, cur)}`,
     taxIncluded ? taxNote || "Prices include tax" : "",
@@ -904,8 +954,8 @@ function buildOrderEmail({
     });
   }
   fields.push({
-    name: "Shipping",
-    value: `${formatMoney(shipping, cur)} flat`,
+    name: flatRateShippingPhrase(shipping),
+    value: "US orders",
     inline: true,
   });
   if (!taxIncluded) {
@@ -1480,11 +1530,7 @@ async function serveAsset(request, env, rewritePath) {
       usedPath.endsWith(".html") || usedPath === "/" || usedPath === "/admin";
     if (isHtml) {
       headers.set("Content-Type", "text/html; charset=utf-8");
-      const origin = String(env.SITE_ORIGIN || new URL(request.url).origin).replace(
-        /\/$/,
-        ""
-      );
-      const html = (await res.text()).replaceAll("__SITE_ORIGIN__", origin);
+      const html = htmlTokens(await res.text(), env, request);
       return new Response(html, { status: res.status, headers });
     }
     return new Response(res.body, {
@@ -1537,6 +1583,20 @@ async function route(request, env, url) {
 
   // Original brand file is kept out of public/. Refuse the old URL too.
   if (url.pathname === "/logo.png") return error("Not found", 404);
+
+  if (url.pathname === "/.well-known/apple-developer-merchantid-domain-association") {
+    const body = applePayAssociation(env);
+    if (!body.trim()) {
+      return new Response("Apple Pay domain association is not configured.\n", {
+        status: 404,
+        headers: { "Content-Type": "text/plain; charset=utf-8", "Cache-Control": "no-store" },
+      });
+    }
+    return new Response(body, {
+      status: 200,
+      headers: { "Content-Type": "text/plain", "Cache-Control": "no-cache" },
+    });
+  }
 
   if (url.pathname === "/api/admin/login" && request.method === "POST") {
     return handleAdminLogin(request, env);

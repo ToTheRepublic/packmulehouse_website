@@ -4,16 +4,16 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>X-Frame | Pack Mule House</title>
-  <meta name="description" content="X-Frame magnetic picture hanging system. Modular, damage-free mounts for frames and wall decor. Designed and 3D printed by Pack Mule House." />
+  <meta name="description" content="X-Frame magnetic picture hanging system from Pack Mule House in Thermopolis, Wyoming. __SHIPPING_PHRASE__ on US orders. Prices include tax." />
   <link rel="canonical" href="__SITE_ORIGIN__/" />
   <meta property="og:title" content="X-Frame | Pack Mule House" />
-  <meta property="og:description" content="X-Frame magnetic picture hanging system. Modular, damage-free mounts for frames and wall decor. Designed and 3D printed by Pack Mule House." />
+  <meta property="og:description" content="X-Frame magnetic picture hanging system from Pack Mule House in Thermopolis, Wyoming. __SHIPPING_PHRASE__ on US orders. Prices include tax." />
   <meta property="og:type" content="website" />
   <meta property="og:url" content="__SITE_ORIGIN__/" />
   <meta property="og:image" content="__SITE_ORIGIN__/logo-840.png" />
   <meta name="twitter:card" content="summary_large_image" />
   <meta name="twitter:title" content="X-Frame | Pack Mule House" />
-  <meta name="twitter:description" content="X-Frame magnetic picture hanging system. Modular, damage-free mounts for frames and wall decor. Designed and 3D printed by Pack Mule House." />
+  <meta name="twitter:description" content="X-Frame magnetic picture hanging system from Pack Mule House in Thermopolis, Wyoming. __SHIPPING_PHRASE__ on US orders. Prices include tax." />
   <meta name="twitter:image" content="__SITE_ORIGIN__/logo-840.png" />
   <meta name="theme-color" content="#0b0b0b" />
   <link rel="icon" href="/favicon.ico" sizes="any" />
@@ -994,7 +994,34 @@
 
     .footer-links {
       display: flex;
-      gap: 1.5rem;
+      flex-wrap: wrap;
+      gap: 0.75rem 1.25rem;
+    }
+
+    .product-ship {
+      display: block;
+      margin: 0.15rem 0 0;
+      font-size: 0.8rem;
+      font-weight: 500;
+      color: var(--text-dim);
+    }
+
+    .wallet-buttons {
+      display: flex;
+      flex-direction: column;
+      gap: 0.65rem;
+      margin: 0.35rem 0 1rem;
+    }
+
+    .wallet-buttons > div {
+      min-height: 44px;
+    }
+
+    .pay-divider {
+      margin: 0.85rem 0 0.35rem;
+      text-align: center;
+      color: var(--text-dim);
+      font-size: 0.8rem;
     }
 
     .footer-links a {
@@ -1124,6 +1151,7 @@
         <div class="section-label">The collection</div>
         <h2>X-Frame Kits <span class="sandbox-badge" id="env-badge" hidden>Sandbox</span></h2>
         <p class="tax-note" id="prices-tax-note">Prices include tax</p>
+        <p class="product-ship" id="shipping-note">$10 flat-rate shipping on US orders</p>
       </div>
     </div>
 
@@ -1181,6 +1209,11 @@
       </div>
       <div class="footer-links">
         <a href="#products">Shop</a>
+        <a href="/shipping">Shipping</a>
+        <a href="/returns">Returns</a>
+        <a href="/privacy">Privacy</a>
+        <a href="/terms">Terms</a>
+        <a href="/contact">Contact</a>
         <a href="https://www.youtube.com/@PackMuleHouse" target="_blank" rel="noopener">YouTube</a>
       </div>
     </div>
@@ -1210,7 +1243,7 @@
             <span id="cart-discount">−$0.00</span>
           </div>
           <div class="modal-summary-row">
-            <span>Shipping</span>
+            <span id="cart-shipping-label">$10 flat-rate shipping</span>
             <span id="cart-shipping">$10.00</span>
           </div>
           <div class="modal-summary-row" id="cart-tax-row" hidden>
@@ -1275,8 +1308,21 @@
             <p class="field-hint" id="sandbox-card-hint" hidden>Sandbox test card: 4111 1111 1111 1111 · any future exp · CVV 111 · ZIP 12345</p>
           </div>
 
+          <p class="pay-divider" id="pay-divider" hidden>or</p>
+          <div id="wallet-buttons" class="wallet-buttons" role="group" aria-label="More ways to pay">
+            <div id="apple-pay-button" hidden></div>
+            <div id="google-pay-button" hidden></div>
+            <div id="cash-app-button" hidden></div>
+          </div>
+          <div class="field" id="gift-card-field" hidden>
+            <label id="gift-card-label" for="gift-card-container">Square gift card</label>
+            <div id="gift-card-container" role="group" aria-labelledby="gift-card-label"></div>
+            <button type="button" class="btn btn-outline" id="gift-card-pay">Pay with gift card</button>
+          </div>
+          <p class="field-hint" id="wallet-hint">Apple Pay, Google Pay, Cash App Pay, and Square gift cards show here only when this device supports them.</p>
+
           <div class="modal-actions">
-            <button type="submit" class="btn btn-primary" id="pay-button">Pay now</button>
+            <button type="submit" class="btn btn-primary" id="pay-button">Pay with card</button>
             <button type="button" class="btn btn-outline" id="pay-back-btn">Back to cart</button>
           </div>
           <p class="pay-status" id="pay-status" role="status"></p>
@@ -1303,7 +1349,7 @@
   <div class="cart-toast" id="cart-toast" role="status" aria-live="polite"></div>
   <div id="cart-announcer" class="sr-only" aria-live="polite"></div>
 
-  <script src="/checkout.js?v=15" defer></script>
+  <script src="/checkout.js?v=16" defer></script>
   <script src="/youtube.js" defer></script>
 </body>
 </html>
