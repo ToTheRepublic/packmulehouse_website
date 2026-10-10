@@ -4,8 +4,22 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>X-Frame | Pack Mule House</title>
-  <meta name="description" content="X-Frame magnetic picture hanging system. Modular, damage-free mounts for frames and wall decor. Designed and 3D printed by Pack Mule House." />
-  <link rel="icon" href="logo.png" type="image/png" />
+  <meta name="description" content="X-Frame magnetic picture hanging system from Pack Mule House in Thermopolis, Wyoming. __SHIPPING_PHRASE__ on US orders. Prices include tax." />
+  <link rel="canonical" href="__SITE_ORIGIN__/" />
+  <meta property="og:title" content="X-Frame | Pack Mule House" />
+  <meta property="og:description" content="X-Frame magnetic picture hanging system from Pack Mule House in Thermopolis, Wyoming. __SHIPPING_PHRASE__ on US orders. Prices include tax." />
+  <meta property="og:type" content="website" />
+  <meta property="og:url" content="__SITE_ORIGIN__/" />
+  <meta property="og:image" content="__SITE_ORIGIN__/logo-840.png" />
+  <meta name="twitter:card" content="summary_large_image" />
+  <meta name="twitter:title" content="X-Frame | Pack Mule House" />
+  <meta name="twitter:description" content="X-Frame magnetic picture hanging system from Pack Mule House in Thermopolis, Wyoming. __SHIPPING_PHRASE__ on US orders. Prices include tax." />
+  <meta name="twitter:image" content="__SITE_ORIGIN__/logo-840.png" />
+  <meta name="theme-color" content="#0b0b0b" />
+  <link rel="icon" href="/favicon.ico" sizes="any" />
+  <link rel="icon" href="/icon-32.png" type="image/png" sizes="32x32" />
+  <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+  <link rel="manifest" href="/site.webmanifest" />
 
   <!-- Preconnect for performance -->
   <link rel="preconnect" href="https://fonts.googleapis.com" />
@@ -64,6 +78,7 @@
 
     img {
       max-width: 100%;
+      height: auto;
       display: block;
     }
 
@@ -96,9 +111,22 @@
     .logo-img {
       width: 48px;
       height: 48px;
+      max-width: none;
       border-radius: 50%;
       object-fit: cover;
       border: 2px solid var(--teal);
+    }
+
+    .sr-only {
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      padding: 0;
+      margin: -1px;
+      overflow: hidden;
+      clip: rect(0, 0, 0, 0);
+      white-space: nowrap;
+      border: 0;
     }
 
     .logo-text {
@@ -205,9 +233,19 @@
       position: relative;
     }
 
-    .hero-logo {
+    .hero-visual picture {
+      display: block;
       width: 100%;
       max-width: 420px;
+      margin: 0 auto;
+    }
+
+    .hero-logo {
+      width: 100%;
+      height: auto;
+      /* Source art is 3652×3500. width/height attributes must not lock a pixel height while max-width shrinks the box. */
+      aspect-ratio: 3652 / 3500;
+      object-fit: contain;
       margin: 0 auto;
       border-radius: var(--radius-lg);
       box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.6);
@@ -291,6 +329,17 @@
       gap: 1.5rem;
     }
 
+    .product-section + .product-section {
+      margin-top: 2.75rem;
+    }
+
+    .product-section h2 {
+      font-family: "Space Grotesk", sans-serif;
+      font-size: clamp(1.45rem, 3vw, 1.9rem);
+      font-weight: 600;
+      margin: 0 0 1.25rem;
+    }
+
     .product-card {
       background: var(--surface);
       border: 1px solid var(--border);
@@ -334,6 +383,20 @@
       font-weight: 600;
       color: var(--tan);
       font-size: 1.1rem;
+    }
+
+    .tax-note {
+      margin: 0.35rem 0 0;
+      font-size: 0.8rem;
+      font-weight: 500;
+      color: var(--text-dim);
+    }
+
+    .product-price .tax-note {
+      display: block;
+      margin-top: 0.15rem;
+      font-size: 0.75rem;
+      font-weight: 500;
     }
 
     .product-footer {
@@ -474,6 +537,10 @@
       font-size: 0.95rem;
     }
 
+    .modal-summary-row[hidden] {
+      display: none !important;
+    }
+
     .modal-summary-row + .modal-summary-row {
       margin-top: 0.45rem;
     }
@@ -536,6 +603,14 @@
 
     .modal-actions .btn {
       width: 100%;
+    }
+
+    .confirm-order {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 0.92rem;
+      word-break: break-all;
+      margin: 0.2rem 0 0.85rem;
+      color: var(--text);
     }
 
     .modal-actions .btn:disabled {
@@ -915,7 +990,9 @@
     .footer-brand img {
       width: 36px;
       height: 36px;
+      max-width: none;
       border-radius: 50%;
+      object-fit: cover;
       border: 1px solid var(--border);
     }
 
@@ -932,7 +1009,45 @@
 
     .footer-links {
       display: flex;
-      gap: 1.5rem;
+      flex-wrap: wrap;
+      gap: 0.75rem 1.25rem;
+    }
+
+    .product-ship {
+      display: block;
+      margin: 0.15rem 0 0;
+      font-size: 0.8rem;
+      font-weight: 500;
+      color: var(--text-dim);
+    }
+
+    .wallet-buttons {
+      display: flex;
+      flex-direction: column;
+      gap: 0.65rem;
+      margin: 0.35rem 0 1rem;
+    }
+
+    .wallet-buttons > div {
+      min-height: 44px;
+    }
+
+    .wallet-buttons.is-busy,
+    #gift-card-field.is-busy {
+      pointer-events: none;
+      opacity: 0.55;
+    }
+
+    #gift-card-pay:disabled {
+      opacity: 0.55;
+      cursor: not-allowed;
+    }
+
+    .pay-divider {
+      margin: 0.85rem 0 0.35rem;
+      text-align: center;
+      color: var(--text-dim);
+      font-size: 0.8rem;
     }
 
     .footer-links a {
@@ -965,6 +1080,7 @@
         order: -1;
       }
 
+      .hero-visual picture,
       .hero-logo {
         max-width: 280px;
       }
@@ -995,7 +1111,10 @@
   <header class="header">
     <div class="header-inner">
       <a href="/" class="logo-link">
-        <img src="logo.png" alt="Pack Mule House" class="logo-img" />
+        <picture>
+          <source type="image/webp" srcset="logo-48.webp 1x, logo-96.webp 2x" />
+          <img src="logo-96.png" srcset="logo-48.png 1x, logo-96.png 2x" width="48" height="48" alt="Pack Mule House" class="logo-img" />
+        </picture>
         <div class="logo-text">Pack Mule <span>House</span></div>
       </a>
 
@@ -1027,7 +1146,10 @@
       </div>
     </div>
     <div class="hero-visual">
-      <img src="logo.png" alt="Pack Mule House logo" class="hero-logo" />
+      <picture>
+        <source type="image/webp" srcset="logo-420.webp 420w, logo-840.webp 840w" sizes="(max-width: 860px) 280px, 420px" />
+        <img src="logo-840.png" srcset="logo-420.png 420w, logo-840.png 840w" sizes="(max-width: 860px) 280px, 420px" width="3652" height="3500" alt="Pack Mule House logo" class="hero-logo" />
+      </picture>
     </div>
   </section>
 
@@ -1052,13 +1174,17 @@
   <section class="products" id="products">
     <div class="products-header">
       <div>
-        <div class="section-label">The collection</div>
-        <h2>X-Frame Kits <span class="sandbox-badge" id="env-badge" hidden>Sandbox</span></h2>
+        <div class="section-label">The collection <span class="sandbox-badge" id="env-badge" hidden>Sandbox</span></div>
+        <h2 id="products-heading">X-Frame Kits</h2>
+        <p class="tax-note" id="prices-tax-note">Prices include tax</p>
+        <p class="product-ship" id="shipping-note">$10 flat-rate shipping on US orders</p>
       </div>
     </div>
 
-    <div class="product-grid" id="product-grid" aria-live="polite">
-      <div class="products-status">Loading products…</div>
+    <div id="product-mount" aria-live="polite">
+      <div class="product-grid" id="product-grid">
+        <div class="products-status">Loading products…</div>
+      </div>
     </div>
   </section>
 
@@ -1068,17 +1194,17 @@
       <h2>Why X-Frame?</h2>
       <div class="benefits-grid">
         <div class="benefit-card">
-          <div class="benefit-icon">🧲</div>
+          <div class="benefit-icon" aria-hidden="true">🧲</div>
           <h3>Magnetic + Interlocking</h3>
           <p>Strong hold with clean alignment. Swap art in seconds without tools.</p>
         </div>
         <div class="benefit-card">
-          <div class="benefit-icon">🖼️</div>
+          <div class="benefit-icon" aria-hidden="true">🖼️</div>
           <h3>Damage-Free Options</h3>
           <p>Use screws for permanence or Command strips for rentals and temporary displays.</p>
         </div>
         <div class="benefit-card">
-          <div class="benefit-icon">🖨️</div>
+          <div class="benefit-icon" aria-hidden="true">🖨️</div>
           <h3>Designed & Printed Here</h3>
           <p>In-house 3D printed for durability and tight tolerances. Built by makers, for makers.</p>
         </div>
@@ -1100,7 +1226,10 @@
   <footer class="footer">
     <div class="footer-inner">
       <div class="footer-brand">
-        <img src="logo.png" alt="Pack Mule House" />
+        <picture>
+          <source type="image/webp" srcset="logo-36.webp 1x, logo-72.webp 2x" />
+          <img src="logo-72.png" srcset="logo-36.png 1x, logo-72.png 2x" width="36" height="36" alt="" />
+        </picture>
         <span>Pack Mule House</span>
       </div>
       <div class="footer-meta">
@@ -1108,13 +1237,18 @@
       </div>
       <div class="footer-links">
         <a href="#products">Shop</a>
+        <a href="/shipping">Shipping</a>
+        <a href="/returns">Returns</a>
+        <a href="/privacy">Privacy</a>
+        <a href="/terms">Terms</a>
+        <a href="/contact">Contact</a>
         <a href="https://www.youtube.com/@PackMuleHouse" target="_blank" rel="noopener">YouTube</a>
       </div>
     </div>
   </footer>
 
   <!-- CART + CHECKOUT MODAL -->
-  <div class="modal-overlay" id="checkout-modal" role="dialog" aria-modal="true" aria-labelledby="checkout-title" hidden>
+  <div class="modal-overlay" id="checkout-modal" role="dialog" aria-modal="true" aria-labelledby="checkout-title" tabindex="-1" hidden>
     <div class="modal wide">
       <div class="modal-header">
         <div>
@@ -1137,17 +1271,18 @@
             <span id="cart-discount">−$0.00</span>
           </div>
           <div class="modal-summary-row">
-            <span>Shipping</span>
+            <span id="cart-shipping-label">$10 flat-rate shipping</span>
             <span id="cart-shipping">$10.00</span>
           </div>
-          <div class="modal-summary-row">
-            <span id="cart-tax-label">Sales Tax (6%)</span>
+          <div class="modal-summary-row" id="cart-tax-row" hidden>
+            <span id="cart-tax-label">Sales Tax</span>
             <span id="cart-tax">$0.00</span>
           </div>
           <div class="modal-summary-row total">
             <span>Total</span>
             <span id="cart-total">$10.00</span>
           </div>
+          <p class="tax-note" id="cart-tax-note">Prices include tax</p>
         </div>
         <div class="modal-actions">
           <button type="button" class="btn btn-primary" id="cart-checkout-btn">Checkout</button>
@@ -1187,99 +1322,63 @@
             </div>
             <div class="field">
               <label for="ship-state">State</label>
-              <input type="text" id="ship-state" name="state" autocomplete="address-level1" required placeholder="WY" maxlength="2" />
+              <input type="text" id="ship-state" name="state" autocomplete="address-level1" required placeholder="WY" maxlength="2" autocapitalize="characters" pattern="[A-Za-z]{2}" />
             </div>
             <div class="field">
               <label for="ship-postal">ZIP</label>
-              <input type="text" id="ship-postal" name="postal" autocomplete="postal-code" required placeholder="82443" />
+              <input type="text" id="ship-postal" name="postal" autocomplete="postal-code" required placeholder="82443" inputmode="numeric" pattern="[0-9]{5}(-[0-9]{4})?" />
             </div>
           </div>
 
           <div class="field">
-            <label>Card details</label>
-            <div id="card-container"><!-- Square Web Payments card form --></div>
+            <label id="card-details-label" for="card-container">Card details</label>
+            <div id="card-container" role="group" aria-labelledby="card-details-label"><!-- Square Web Payments card form --></div>
             <p class="field-hint" id="sandbox-card-hint" hidden>Sandbox test card: 4111 1111 1111 1111 · any future exp · CVV 111 · ZIP 12345</p>
           </div>
 
+          <p class="pay-divider" id="pay-divider" hidden>or</p>
+          <div id="wallet-buttons" class="wallet-buttons" role="group" aria-label="More ways to pay">
+            <div id="apple-pay-button" hidden></div>
+            <div id="google-pay-button" hidden></div>
+            <div id="cash-app-button" hidden></div>
+          </div>
+          <div class="field" id="gift-card-field" hidden>
+            <label id="gift-card-label" for="gift-card-container">Square gift card</label>
+            <div id="gift-card-container" role="group" aria-labelledby="gift-card-label"></div>
+            <button type="button" class="btn btn-outline" id="gift-card-pay">Pay with gift card</button>
+          </div>
+          <p class="field-hint" id="wallet-hint">Apple Pay, Google Pay, Cash App Pay, and Square gift cards show here only when this device supports them.</p>
+
           <div class="modal-actions">
-            <button type="submit" class="btn btn-primary" id="pay-button">Pay now</button>
+            <button type="submit" class="btn btn-primary" id="pay-button">Pay with card</button>
             <button type="button" class="btn btn-outline" id="pay-back-btn">Back to cart</button>
           </div>
           <p class="pay-status" id="pay-status" role="status"></p>
         </form>
       </div>
+
+      <div class="modal-panel" id="panel-confirm" hidden>
+        <p id="confirm-message">Thank you. Your payment went through.</p>
+        <div class="modal-summary">
+          <div class="modal-summary-row">
+            <span>Order reference</span>
+          </div>
+          <p id="confirm-order" class="confirm-order"></p>
+          <p id="confirm-mto" class="field-hint" hidden></p>
+        </div>
+        <p><a id="confirm-receipt" href="" target="_blank" rel="noopener">View Square receipt</a></p>
+        <p id="confirm-receipt-note" class="field-hint" hidden></p>
+        <div class="modal-actions">
+          <button type="button" class="btn btn-primary" id="confirm-done">Done</button>
+        </div>
+      </div>
     </div>
   </div>
 
   <div class="cart-toast" id="cart-toast" role="status" aria-live="polite"></div>
+  <div id="cart-announcer" class="sr-only" aria-live="polite"></div>
 
-  <script src="/checkout.js?v=12" defer></script>
-  <script>
-    // Load YouTube IFrame API and force closed captions off on start / play.
-    (function () {
-      var VIDEO_ID = "5uQ2c1h6dxc";
-      var player = null;
-
-      function forceCaptionsOff() {
-        if (!player || typeof player.unloadModule !== "function") return;
-        try {
-          // Prefer unloading captions module (works for many account prefs)
-          player.unloadModule("captions");
-          player.unloadModule("cc");
-        } catch (e) { /* ignore */ }
-        try {
-          if (typeof player.setOption === "function") {
-            player.setOption("captions", "track", {});
-          }
-        } catch (e2) { /* ignore */ }
-      }
-
-      window.onYouTubeIframeAPIReady = function () {
-        player = new YT.Player("yt-player", {
-          videoId: VIDEO_ID,
-          playerVars: {
-            autoplay: 1,
-            mute: 1,
-            loop: 1,
-            playlist: VIDEO_ID, // required for loop
-            playsinline: 1,
-            rel: 0,
-            modestbranding: 1,
-            controls: 1,
-            cc_load_policy: 0, // do not force captions on
-            iv_load_policy: 3,
-            fs: 1,
-          },
-          events: {
-            onReady: function () {
-              forceCaptionsOff();
-              try {
-                player.mute();
-                player.playVideo();
-              } catch (e) { /* ignore */ }
-            },
-            onStateChange: function (ev) {
-              // Re-assert captions off when playback starts (account prefs often re-enable)
-              if (ev.data === YT.PlayerState.PLAYING || ev.data === YT.PlayerState.BUFFERING) {
-                forceCaptionsOff();
-              }
-            },
-            onApiChange: function () {
-              forceCaptionsOff();
-            },
-          },
-        });
-      };
-
-      // Inject API script once
-      if (!document.getElementById("yt-iframe-api")) {
-        var tag = document.createElement("script");
-        tag.id = "yt-iframe-api";
-        tag.src = "https://www.youtube.com/iframe_api";
-        tag.async = true;
-        document.head.appendChild(tag);
-      }
-    })();
-  </script>
+  <script src="/checkout.js?v=19" defer></script>
+  <script src="/youtube.js" defer></script>
 </body>
 </html>

@@ -16,29 +16,71 @@
       "id": "364c9dbc453441958387a99da3afb5bd"
     }
   ],
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "MTO_COUNTER",
+        "class_name": "MtoCounter"
+      }
+    ]
+  },
+  "migrations": [
+    {
+      "tag": "v1-mto-counter",
+      "new_sqlite_classes": ["MtoCounter"]
+    }
+  ],
   "vars": {
     "SQUARE_APPLICATION_ID": "sandbox-sq0idb-dvcNz5fkPbzX4fuFaxg57Q",
     "SQUARE_LOCATION_ID": "LKJ4C91RD6JQH",
     "SQUARE_ENVIRONMENT": "sandbox",
     "SHIPPING_CENTS": "1000",
-    // Sales tax (on top of prices). Origin-style flat rate for your location — change if your accountant says otherwise.
+    // Made-to-order lead times in weeks. Keys are Square category ids or names
+    // (or a substring of the item name). Default is 1 week.
+    "LEAD_TIME_WEEKS_DEFAULT": "1",
+    "LEAD_TIME_WEEKS": "X-Frame:1, Wind River Canyon:2",
+    // Shown on the policy pages. Change this when you revise the policies.
+    "POLICY_EFFECTIVE_DATE": "October 10, 2026",
+    // Apple Pay domain file from the Square Developer Console. Sandbox and
+    // production files differ. Leave empty until you download one. The site
+    // serves it at /.well-known/apple-developer-merchantid-domain-association.
+    // "APPLE_PAY_DOMAIN_ASSOCIATION_SANDBOX": "",
+    // "APPLE_PAY_DOMAIN_ASSOCIATION_PRODUCTION": "",
+    // Shelf prices already include tax, matching in-person market pricing.
+    // No separate tax is added to quotes, the cart, or the Square order.
+    // Set TAX_MODE to "added" to charge TAX_PERCENT on top of merchandise
+    // (and shipping when TAX_APPLIES_TO_SHIPPING is true). Not a jurisdiction lookup.
+    "TAX_MODE": "included",
     "TAX_PERCENT": "6",
     "TAX_NAME": "Sales Tax",
-    // Tax shipping as well as merchandise (common; set "false" to tax products only)
+    // Used only when TAX_MODE is "added". "false" taxes merchandise only.
     "TAX_APPLIES_TO_SHIPPING": "true",
     // Discounts come from Square Catalog pricing rules (same as POS).
     // Site uses pricing_options.auto_apply_discounts — manage in Square Dashboard.
     "MERCHANT_NOTIFY_EMAIL": "packmulehouse@gmail.com",
-    "NTFY_TOPIC": "packmulehouse-orders-pmh7k2x9",
     "NTFY_SERVER": "https://ntfy.sh",
+    // Public site origin (canonical links, FormSubmit). Change this at go-live.
+    "SITE_ORIGIN": "https://packmulehouse-website.philip-michael-howard.workers.dev",
+    // Resend From address. Sandbox can use Resend's onboarding sender; production needs a verified domain.
+    "EMAIL_FROM": "Pack Mule House <onboarding@resend.dev>",
+    // Shop sections, in order. Each entry is a Square category name or id.
+    // Names match case-insensitively. Leave unset to list the whole catalog.
+    // Assign items to these categories in the Square dashboard; new items show up
+    // on the next catalog load. Empty categories are omitted.
+    "SHOP_CATEGORIES": "X-Frame, Wind River Canyon, Keychains",
+    // Optional extra allowlists. Ids only. Leave unset unless you need them.
+    // "SQUARE_CATEGORY_ID": "",
+    // "SQUARE_ITEM_IDS": "",
     // FOMO: only show stock when below this
     "LOW_STOCK_THRESHOLD": "10",
     // Made-to-order capacity (you re-enable via admin when drained)
     "MTO_MAX": "50",
     "MTO_PROMISE": "Ships within 1 week (all items together)"
   },
-  // Secrets: SQUARE_ACCESS_TOKEN, ADMIN_PASSWORD
-  // Optional: DISCORD_WEBHOOK_URL, RESEND_API_KEY, TELEGRAM_*, NTFY_TOKEN
+  // Secrets (wrangler secret put), not vars:
+  //   SQUARE_ACCESS_TOKEN, ADMIN_PASSWORD, ADMIN_SESSION_SECRET, NTFY_TOPIC
+  // Optional secrets: NTFY_TOKEN, DISCORD_WEBHOOK_URL, RESEND_API_KEY,
+  //   TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID
   "observability": {
     "enabled": true
   }
