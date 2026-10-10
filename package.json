@@ -2,11 +2,13 @@
   "name": "packmulehouse-website",
   "version": "1.0.0",
   "private": true,
+  "type": "module",
   "description": "Pack Mule House — X-Frame product site",
   "scripts": {
     "dev": "wrangler dev",
     "deploy": "wrangler deploy",
-    "whoami": "wrangler whoami"
+    "whoami": "wrangler whoami",
+    "test": "node --test"
   },
   "devDependencies": {
     "wrangler": "^4.0.0"
