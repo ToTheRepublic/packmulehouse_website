@@ -78,6 +78,7 @@
 
     img {
       max-width: 100%;
+      height: auto;
       display: block;
     }
 
@@ -110,6 +111,7 @@
     .logo-img {
       width: 48px;
       height: 48px;
+      max-width: none;
       border-radius: 50%;
       object-fit: cover;
       border: 2px solid var(--teal);
@@ -231,9 +233,19 @@
       position: relative;
     }
 
-    .hero-logo {
+    .hero-visual picture {
+      display: block;
       width: 100%;
       max-width: 420px;
+      margin: 0 auto;
+    }
+
+    .hero-logo {
+      width: 100%;
+      height: auto;
+      /* Source art is 3652×3500. width/height attributes must not lock a pixel height while max-width shrinks the box. */
+      aspect-ratio: 3652 / 3500;
+      object-fit: contain;
       margin: 0 auto;
       border-radius: var(--radius-lg);
       box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.6);
@@ -949,7 +961,9 @@
     .footer-brand img {
       width: 36px;
       height: 36px;
+      max-width: none;
       border-radius: 50%;
+      object-fit: cover;
       border: 1px solid var(--border);
     }
 
@@ -999,6 +1013,7 @@
         order: -1;
       }
 
+      .hero-visual picture,
       .hero-logo {
         max-width: 280px;
       }
@@ -1065,8 +1080,8 @@
     </div>
     <div class="hero-visual">
       <picture>
-        <source type="image/webp" srcset="logo-420.webp 420w, logo-840.webp 840w" sizes="(max-width: 720px) 280px, 420px" />
-        <img src="logo-840.png" srcset="logo-420.png 420w, logo-840.png 840w" sizes="(max-width: 720px) 280px, 420px" width="840" height="805" alt="Pack Mule House logo" class="hero-logo" />
+        <source type="image/webp" srcset="logo-420.webp 420w, logo-840.webp 840w" sizes="(max-width: 860px) 280px, 420px" />
+        <img src="logo-840.png" srcset="logo-420.png 420w, logo-840.png 840w" sizes="(max-width: 860px) 280px, 420px" width="3652" height="3500" alt="Pack Mule House logo" class="hero-logo" />
       </picture>
     </div>
   </section>
