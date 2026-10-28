@@ -438,6 +438,36 @@
    * the lowest one so the card can say "Starting at $22.00". Null when every
    * variation costs the same.
    */
+  /**
+   * One sentence per line, and the email as a mailto link that never breaks,
+   * so the notice wraps cleanly on narrow cards.
+   */
+  function fillCheckoutOffNote(el, message) {
+    // Split only where punctuation is followed by a space, so the dot in
+    // an email address stays put.
+    const sentences = String(message).split(/(?<=[.!?])\s+/).filter(Boolean);
+    for (const sentence of sentences) {
+      const line = document.createElement("span");
+      const text = sentence.trim();
+      const m = text.match(/[\w.+-]+@[\w-]+(?:\.[\w-]+)+/);
+      if (m) {
+        const a = document.createElement("a");
+        a.href = `mailto:${m[0]}`;
+        a.textContent = m[0];
+        // Email and the words after it wrap as one unit.
+        const tail = document.createElement("span");
+        tail.className = "note-email";
+        tail.append(a, text.slice(m.index + m[0].length));
+        // Non-breaking spaces keep "Message us at" together too.
+        const lead = text.slice(0, m.index).trim().replace(/ /g, "\u00a0");
+        line.append(lead ? `${lead} ` : "", tail);
+      } else {
+        line.textContent = text;
+      }
+      el.appendChild(line);
+    }
+  }
+
   function priceRange(product) {
     const amounts = (product.variations || [])
       .map((v) => Number(v.amount))
@@ -761,7 +791,7 @@
       if (config && config.checkoutEnabled === false) {
         const note = document.createElement("p");
         note.className = "checkout-off-note";
-        note.textContent = config.checkoutOffMessage || CHECKOUT_OFF_FALLBACK;
+        fillCheckoutOffNote(note, config.checkoutOffMessage || CHECKOUT_OFF_FALLBACK);
         actions.append(note);
       } else {
         actions.append(qty, btn);
