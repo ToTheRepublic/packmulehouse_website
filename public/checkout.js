@@ -443,7 +443,9 @@
    * so the notice wraps cleanly on narrow cards.
    */
   function fillCheckoutOffNote(el, message) {
-    const sentences = String(message).match(/[^.!?]+[.!?]*(?:\s+|$)/g) || [message];
+    // Split only where punctuation is followed by a space, so the dot in
+    // an email address stays put.
+    const sentences = String(message).split(/(?<=[.!?])\s+/).filter(Boolean);
     for (const sentence of sentences) {
       const line = document.createElement("span");
       const text = sentence.trim();
