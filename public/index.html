@@ -406,6 +406,70 @@
       gap: 1.5rem;
     }
 
+    /* Short sections on wide screens: one item becomes a horizontal feature
+       card (photo left, details right); two items share the row as two
+       larger cards. Phones and 3+ items keep the normal grid. */
+    @media (min-width: 900px) {
+      .product-section:has(.product-card:only-child) h2,
+      .product-grid:has(> .product-card:only-child) {
+        max-width: 980px;
+        margin-left: auto;
+        margin-right: auto;
+      }
+
+      .product-grid:has(> .product-card:only-child) {
+        grid-template-columns: 1fr;
+      }
+
+      .product-card:only-child {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+      }
+
+      .product-card:only-child:hover {
+        transform: none;
+      }
+
+      .product-card:only-child .product-image {
+        aspect-ratio: auto;
+        min-height: 100%;
+      }
+
+      .product-card:only-child .product-body {
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+        padding: 2.25rem 2.5rem;
+      }
+
+      .product-card:only-child .product-body h3 {
+        font-size: 1.6rem;
+        margin-bottom: 0.6rem;
+      }
+
+      .product-card:only-child .product-body p {
+        font-size: 1rem;
+        line-height: 1.6;
+        margin-bottom: 1.4rem;
+      }
+
+      .product-card:only-child .product-price {
+        font-size: 1.45rem;
+      }
+
+      .product-section:has(.product-card:nth-child(2):last-child) h2,
+      .product-grid:has(> .product-card:nth-child(2):last-child) {
+        max-width: 980px;
+        margin-left: auto;
+        margin-right: auto;
+      }
+
+      .product-grid:has(> .product-card:nth-child(2):last-child) {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 2rem;
+      }
+    }
+
     .product-section + .product-section {
       margin-top: 2.75rem;
     }
