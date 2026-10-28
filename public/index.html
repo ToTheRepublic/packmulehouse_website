@@ -400,10 +400,19 @@
       font-weight: 600;
     }
 
+    /* Cards keep a steady width; a short row is centred instead of
+       hugging the left edge. */
     .product-grid {
       display: grid;
-      grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+      grid-template-columns: repeat(auto-fit, minmax(260px, 320px));
+      justify-content: center;
       gap: 1.5rem;
+    }
+
+    @media (max-width: 600px) {
+      .product-grid {
+        grid-template-columns: minmax(0, 420px);
+      }
     }
 
     .product-section + .product-section {
@@ -415,6 +424,7 @@
       font-size: clamp(1.45rem, 3vw, 1.9rem);
       font-weight: 600;
       margin: 0 0 1.25rem;
+      text-align: center;
     }
 
     .product-card {
