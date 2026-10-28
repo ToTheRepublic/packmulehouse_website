@@ -8,6 +8,7 @@ import {
   itemCategoryIds,
   presentAtLocation,
   productSections,
+  withoutStockSignals,
   publicMto,
   shopCategoryLabels,
   variationTracksInventory,
@@ -187,4 +188,32 @@ test("location presence rejects absent and allowlisted locations", () => {
     presentAtLocation({ present_at_all_locations: false, present_at_location_ids: ["OTHER"] }, "L"),
     false
   );
+});
+
+test("stock signals are stripped for the storefront when checkout is off", () => {
+  const products = [
+    {
+      id: "kit",
+      lowStock: 9,
+      stockDisplay: "Only 9 left",
+      stockTone: "fomo",
+      availability: "low",
+      variations: [
+        { id: "v1", amount: 2200, lowStock: 9, stockDisplay: "Only 9 left", stockTone: "fomo" },
+        { id: "v2", amount: 2600, lowStock: null, stockDisplay: "Currently unavailable", stockTone: "out" },
+      ],
+    },
+  ];
+  const [p] = withoutStockSignals(products);
+  assert.equal(p.stockDisplay, null);
+  assert.equal(p.lowStock, null);
+  assert.equal(p.stockTone, null);
+  assert.equal(p.availability, "low");
+  for (const v of p.variations) {
+    assert.equal(v.stockDisplay, null);
+    assert.equal(v.lowStock, null);
+    assert.equal(v.stockTone, null);
+  }
+  assert.equal(p.variations[1].amount, 2600);
+  assert.equal(products[0].stockDisplay, "Only 9 left", "input is not mutated");
 });

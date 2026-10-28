@@ -212,3 +212,16 @@ export function publicMto(mto) {
     promise: mto?.promise || "",
   };
 }
+
+/**
+ * Storefront copy without stock signals (low-stock count, made-to-order and
+ * unavailable labels). Used while online checkout is off, so shoppers don't
+ * see counts they can't act on yet.
+ */
+export function withoutStockSignals(products) {
+  const strip = (o) => ({ ...o, lowStock: null, stockDisplay: null, stockTone: null });
+  return (products || []).map((p) => ({
+    ...strip(p),
+    variations: (p.variations || []).map(strip),
+  }));
+}
