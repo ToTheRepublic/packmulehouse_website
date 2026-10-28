@@ -30,20 +30,38 @@
   const cartCheckoutBtn = document.getElementById("cart-checkout-btn");
   const toastEl = document.getElementById("cart-toast");
   const sandboxHint = document.getElementById("sandbox-card-hint");
+  const panelConfirm = document.getElementById("panel-confirm");
+  const confirmMessage = document.getElementById("confirm-message");
+  const confirmOrder = document.getElementById("confirm-order");
+  const confirmMto = document.getElementById("confirm-mto");
+  const confirmReceipt = document.getElementById("confirm-receipt");
+  const announcer = document.getElementById("cart-announcer");
+  const US_STATES = new Set(
+    "AL AK AZ AR CA CO CT DE DC FL GA HI ID IL IN IA KS KY LA ME MD MA MI MN MS MO MT NE NV NH NJ NM NY NC ND OH OK OR PA RI SC SD TN TX UT VT VA WA WV WI WY PR VI GU AS MP".split(
+      " "
+    )
+  );
+  const ZIP_RE = /^\d{5}(-\d{4})?$/;
 
   let config = null;
+  const CHECKOUT_OFF_FALLBACK =
+    "Online ordering opens soon. Message us at packmulehouse@gmail.com to order.";
   let shippingCents = 1000;
+  let shippingPhrase = "$10 flat-rate shipping";
   let taxInfo = {
+    mode: "included",
+    included: true,
+    chargesTax: false,
     percent: 6,
     name: "Sales Tax",
     appliesToShipping: true,
-    label: "6%",
+    label: "Included",
+    note: "Prices include tax",
   };
   /** Square catalog promos (display only; amounts from /api/quote) */
   let discountInfo = { promos: [], summary: "" };
   let mtoInfo = {
     open: true,
-    remaining: 50,
     promise: "Ships within 1 week (all items together)",
   };
   /**
@@ -56,9 +74,35 @@
   let variationsById = new Map();
   let card = null;
   let payments = null;
+  let paymentRequest = null;
+  let payInFlight = false;
+  const wallets = { applePay: null, googlePay: null, cashAppPay: null, giftCard: null };
+  let cashAppRef = "";
+  // Square freezes these objects, so a marker property throws and used to abort
+  // gift-card setup. Track listeners here instead of on the SDK instance.
+  const cashAppBound = new WeakSet();
+  const walletClickBound = new Set();
+  let lastFocus = null;
+  /** Reused when a pay request never gets a response, so Square is not charged twice. */
+  let checkoutAttempt = null;
   /** @type {{ variationId: string, quantity: number }[]} */
   let cart = loadCart();
   let toastTimer = null;
+
+  function phraseFromCents(cents) {
+    const amount = Math.round(Number(cents) || 0);
+    const dollars = amount / 100;
+    const text = Number.isInteger(dollars) ? `$${dollars}` : `$${dollars.toFixed(2)}`;
+    return `${text} flat-rate shipping`;
+  }
+
+  function syncShippingCopy() {
+    const phrase = shippingPhrase || phraseFromCents(shippingCents);
+    const label = document.getElementById("cart-shipping-label");
+    if (label) label.textContent = phrase;
+    const note = document.getElementById("shipping-note");
+    if (note) note.textContent = `${phrase} on US orders`;
+  }
 
   function moneyLabel(amountCents, currency) {
     try {
@@ -89,12 +133,19 @@
   }
 
   function saveCart() {
+    checkoutAttempt = null;
     try {
       localStorage.setItem(CART_KEY, JSON.stringify(cart));
     } catch {
       /* ignore */
     }
     updateCartBadge();
+  }
+
+  function announce(message) {
+    if (!announcer || !message) return;
+    announcer.textContent = "";
+    announcer.textContent = message;
   }
 
   function cartCount() {
@@ -159,10 +210,7 @@
       : 0;
     const merch = Math.max(0, subtotal - discount);
     const ship = shippingCents;
-    const taxPct = Number(taxInfo.percent) || 0;
-    const taxBase =
-      merch + (taxInfo.appliesToShipping !== false ? ship : 0);
-    const tax = taxPct > 0 ? Math.round((taxBase * taxPct) / 100) : 0;
+    const tax = separateTaxCents(merch, ship);
     return {
       subtotal,
       discount,
@@ -171,11 +219,34 @@
         : null,
       shipping: ship,
       tax,
-      taxLabel: taxLabelTextFallback(),
+      taxLabel: chargesTaxNow() ? taxLabelTextFallback() : null,
+      taxNote: pricesIncludeTax() ? taxInfo.note || "Prices include tax" : "",
       amount: merch + ship + tax,
       currency,
       local: true,
     };
+  }
+
+  function pricesIncludeTax() {
+    return taxInfo.mode !== "added";
+  }
+
+  function chargesTaxNow() {
+    return taxInfo.mode === "added" && Number(taxInfo.percent) > 0;
+  }
+
+  function separateTaxCents(merch, ship) {
+    if (!chargesTaxNow()) return 0;
+    const taxBase = merch + (taxInfo.appliesToShipping !== false ? ship : 0);
+    return Math.round((taxBase * Number(taxInfo.percent)) / 100);
+  }
+
+  function syncTaxNote() {
+    const note = document.getElementById("prices-tax-note");
+    if (!note) return;
+    const show = pricesIncludeTax();
+    note.hidden = !show;
+    if (show) note.textContent = taxInfo.note || "Prices include tax";
   }
 
   function taxLabelTextFallback() {
@@ -199,8 +270,9 @@
         discount: quote.discount || 0,
         discountLabel: quote.discountLabel || null,
         shipping: quote.shipping != null ? quote.shipping : shippingCents,
-        tax: quote.tax || 0,
-        taxLabel: quote.taxLabel || taxLabelTextFallback(),
+        tax: chargesTaxNow() ? quote.tax || 0 : 0,
+        taxLabel: chargesTaxNow() ? quote.taxLabel || taxLabelTextFallback() : null,
+        taxNote: pricesIncludeTax() ? quote.taxNote || taxInfo.note || "Prices include tax" : "",
         amount: quote.amount,
         currency: quote.currency || local.currency,
         local: false,
@@ -332,10 +404,11 @@
           ...v,
           productId: p.id,
           productName: p.name,
-          stock: v.stock != null ? v.stock : p.stock,
+          lowStock: v.lowStock != null ? v.lowStock : null,
+          availability: v.availability || p.availability,
           trackInventory:
             v.trackInventory != null ? v.trackInventory : p.trackInventory,
-          maxQty: p.maxQty,
+          maxQty: v.maxQty != null ? v.maxQty : p.maxQty,
         });
       }
     }
@@ -354,9 +427,7 @@
   function lineMaxQty(variation) {
     if (!variation) return 20;
     if (variation.maxQty != null) return Math.max(0, variation.maxQty);
-    if (!variation.trackInventory || variation.stock == null) return 20;
-    const mto = mtoInfo.open ? mtoInfo.remaining : 0;
-    return Math.min(20, Math.max(0, variation.stock) + mto);
+    return 20;
   }
 
   function addToCart(product, quantity) {
@@ -372,7 +443,6 @@
       ...variation,
       maxQty: product.maxQty,
       trackInventory: variation.trackInventory ?? product.trackInventory,
-      stock: variation.stock ?? product.stock,
     });
 
     if (max <= 0) {
@@ -389,11 +459,7 @@
     const nextQty = existing ? existing.quantity + qty : qty;
 
     if (nextQty > max) {
-      showToast(
-        max > (variation.stock || 0)
-          ? `You can order up to ${max} (includes made-to-order)`
-          : `Only ${max} available`
-      );
+      showToast(`You can order up to ${max}`);
       if (existing) {
         existing.quantity = max;
         saveCart();
@@ -409,74 +475,161 @@
     saveCart();
     scheduleQuoteAndRender();
 
-    const stock = variation.stock ?? product.stock;
-    const mtoPart =
-      variation.trackInventory && stock != null
-        ? Math.max(0, nextQty - Math.max(0, stock))
-        : 0;
-    if (mtoPart > 0) {
-      showToast(`Added ${product.name} (${mtoPart} made to order)`);
-    } else {
-      showToast(`Added ${product.name} to cart`);
-    }
+    const shelf =
+      variation.availability === "mto"
+        ? 0
+        : variation.lowStock != null
+          ? variation.lowStock
+          : null;
+    const mtoPart = shelf == null ? 0 : Math.max(0, nextQty - shelf);
+    const added =
+      variation.availability === "mto" || mtoPart > 0
+        ? `Added ${product.name}${mtoPart ? ` (${mtoPart} made to order)` : " (made to order)"}`
+        : `Added ${product.name} to cart`;
+    showToast(added);
   }
 
   function setLineQty(variationId, quantity) {
     const v = variationsById.get(variationId);
     const max = lineMaxQty(v);
     let qty = Math.max(0, Math.min(max || 0, Number(quantity) || 0));
-    if (v && quantity > max) {
-      showToast(
-        max > (v.stock || 0)
-          ? `Max ${max} (stock + made-to-order)`
-          : `Only ${max} available`
-      );
-    }
+    if (v && quantity > max) showToast(`You can order up to ${max}`);
     if (qty <= 0) {
       cart = cart.filter((l) => l.variationId !== variationId);
+      announce("Item removed from cart");
     } else {
       const line = cart.find((l) => l.variationId === variationId);
       if (line) line.quantity = qty;
+      announce(`Quantity ${qty}`);
     }
     saveCart();
     scheduleQuoteAndRender();
   }
 
-  function cartHasMto() {
-    for (const line of cart) {
-      const v = variationsById.get(line.variationId);
-      if (!v || !v.trackInventory || v.stock == null) continue;
-      const shelf = Math.max(0, Number(v.stock) || 0);
-      if (line.quantity > shelf) return true;
-    }
-    return false;
-  }
-
   function cartMtoUnits() {
+    const local = localTotals();
+    if (
+      quote &&
+      quote.itemCount === cartCount() &&
+      quote.subtotal === local.subtotal &&
+      quote.mtoUnits != null
+    ) {
+      return quote.mtoUnits;
+    }
     let n = 0;
     for (const line of cart) {
       const v = variationsById.get(line.variationId);
-      if (!v || !v.trackInventory || v.stock == null) continue;
-      const shelf = Math.max(0, Number(v.stock) || 0);
-      n += Math.max(0, line.quantity - shelf);
+      if (!v || !v.trackInventory) continue;
+      if (v.availability === "mto") n += line.quantity;
+      else if (v.lowStock != null) n += Math.max(0, line.quantity - v.lowStock);
     }
     return n;
   }
 
+  function cartHasMto() {
+    return cartMtoUnits() > 0;
+  }
+
+  function lineIsMto(line, variation) {
+    if (!variation?.trackInventory) return false;
+    if (variation.availability === "mto") return true;
+    return variation.lowStock != null && line.quantity > variation.lowStock;
+  }
+
+  /**
+   * Same wording as src/payments.js mtoConfirmationLine.
+   * "1 item is made to order." / "2 items are made to order."
+   */
+  function mtoConfirmationLine(count, lead) {
+    const n = Math.max(0, Math.round(Number(count) || 0));
+    const sentence = n === 1 ? "1 item is made to order." : `${n} items are made to order.`;
+    const extra = String(lead || "").trim();
+    return extra ? `${sentence} ${extra}` : sentence;
+  }
+
+  function mtoBanner() {
+    const banner = document.createElement("div");
+    banner.className = "mto-banner";
+    const count = cartMtoUnits();
+    const labels = cartMtoLabels();
+    const countText = `${count} made-to-order unit${count === 1 ? "" : "s"}.`;
+    banner.textContent = labels.length ? `${countText} ${labels.join(" ")}` : countText;
+    return banner;
+  }
+
+  function cartMtoLabels() {
+    const labels = [];
+    for (const line of cart) {
+      const v = variationsById.get(line.variationId);
+      if (!lineIsMto(line, v)) continue;
+      const label = v.leadTimeLabel || "Made to order: ships in about 1 week";
+      if (!labels.includes(label)) labels.push(label);
+    }
+    return labels;
+  }
+
   function removeLine(variationId) {
     cart = cart.filter((l) => l.variationId !== variationId);
+    announce("Item removed from cart");
     saveCart();
     scheduleQuoteAndRender();
   }
 
-  function renderProducts(products) {
+  function renderCatalog(products, sections) {
+    const heading = document.getElementById("products-heading");
+    const mount = document.getElementById("product-mount");
+    const list = products || [];
+    if (Array.isArray(sections)) {
+      if (heading) heading.hidden = true;
+      if (!mount) return;
+      mount.replaceChildren();
+      if (!sections.length) {
+        const status = document.createElement("div");
+        status.className = "products-status";
+        status.textContent = "No products in the shop categories yet.";
+        mount.appendChild(status);
+        return;
+      }
+      sections.forEach((section, index) => {
+        const block = document.createElement("section");
+        block.className = "product-section";
+        const h2 = document.createElement("h2");
+        h2.id = `shop-category-${index}`;
+        h2.textContent = section.name || "";
+        block.setAttribute("aria-labelledby", h2.id);
+        const gridEl = document.createElement("div");
+        gridEl.className = "product-grid";
+        block.append(h2, gridEl);
+        mount.appendChild(block);
+        fillProductGrid(gridEl, section.products || []);
+      });
+      return;
+    }
+    if (heading) heading.hidden = false;
+    const target = mount || grid;
+    if (mount) {
+      mount.replaceChildren();
+      const gridEl = document.createElement("div");
+      gridEl.className = "product-grid";
+      gridEl.id = "product-grid";
+      mount.appendChild(gridEl);
+      fillProductGrid(gridEl, list);
+      return;
+    }
+    fillProductGrid(target, list);
+  }
+
+  function fillProductGrid(target, products) {
     if (!products.length) {
-      grid.innerHTML =
-        '<div class="products-status">No products found in the Square catalog yet.</div>';
+      target.replaceChildren();
+      const status = document.createElement("div");
+      status.className = "products-status";
+      status.textContent = "No products found in the Square catalog yet.";
+      target.appendChild(status);
       return;
     }
 
-    grid.innerHTML = "";
+    target.replaceChildren();
 
     for (const p of products) {
       const variation =
@@ -516,6 +669,16 @@
       const price = document.createElement("div");
       price.className = "product-price";
       price.textContent = p.priceLabel;
+      if (pricesIncludeTax()) {
+        const note = document.createElement("span");
+        note.className = "tax-note";
+        note.textContent = taxInfo.note || "Prices include tax";
+        price.appendChild(note);
+      }
+      const shipNote = document.createElement("span");
+      shipNote.className = "product-ship";
+      shipNote.textContent = `${shippingPhrase || phraseFromCents(shippingCents)} on US orders`;
+      price.appendChild(shipNote);
 
       const actions = document.createElement("div");
       actions.className = "product-actions";
@@ -538,6 +701,7 @@
       minus.addEventListener("click", () => {
         pickQty = Math.max(1, pickQty - 1);
         qtyLabel.textContent = String(pickQty);
+        announce(`Quantity ${pickQty} for ${p.name}`);
       });
 
       const plus = document.createElement("button");
@@ -548,6 +712,7 @@
       plus.addEventListener("click", () => {
         pickQty = Math.min(maxQty, pickQty + 1);
         qtyLabel.textContent = String(pickQty);
+        announce(`Quantity ${pickQty} for ${p.name}`);
       });
 
       qty.append(minus, qtyLabel, plus);
@@ -563,7 +728,14 @@
       btn.disabled = unavailable;
       btn.addEventListener("click", () => addToCart(p, pickQty));
 
-      actions.append(qty, btn);
+      if (config && config.checkoutEnabled === false) {
+        const note = document.createElement("p");
+        note.className = "checkout-off-note";
+        note.textContent = config.checkoutOffMessage || CHECKOUT_OFF_FALLBACK;
+        actions.append(note);
+      } else {
+        actions.append(qty, btn);
+      }
       footer.append(price, actions);
       body.append(h3, desc, footer);
 
@@ -574,17 +746,18 @@
           "product-stock" + (p.stockTone ? ` ${p.stockTone}` : "");
         stock.textContent =
           p.stockTone === "mto"
-            ? `${p.stockDisplay} · ships within 1 week`
+            ? p.leadTimeLabel || "Made to order: ships in about 1 week"
             : p.stockDisplay;
         body.appendChild(stock);
       }
 
       article.append(image, body);
-      grid.appendChild(article);
+      target.appendChild(article);
     }
   }
 
   function renderCartLines() {
+    syncShippingCopy();
     cartLinesEl.innerHTML = "";
     const currency = cartCurrency();
     const sub = cartSubtotalCents();
@@ -599,30 +772,39 @@
     cartShippingEl.textContent = cart.length
       ? moneyLabel(shippingCents, currency)
       : moneyLabel(0, currency);
-    if (cartTaxLabelEl) cartTaxLabelEl.textContent = taxLabelText();
-    if (cartTaxEl) {
-      cartTaxEl.textContent = moneyLabel(
-        cart.length ? cartTaxCents() : 0,
-        currency
-      );
+    const taxRow = document.getElementById("cart-tax-row");
+    const showTax = chargesTaxNow();
+    if (taxRow) taxRow.hidden = !showTax;
+    if (showTax) {
+      if (cartTaxLabelEl) cartTaxLabelEl.textContent = taxLabelText();
+      if (cartTaxEl) {
+        cartTaxEl.textContent = moneyLabel(
+          cart.length ? cartTaxCents() : 0,
+          currency
+        );
+      }
+    } else {
+      if (cartTaxLabelEl) cartTaxLabelEl.textContent = "";
+      if (cartTaxEl) cartTaxEl.textContent = "";
+    }
+    const cartTaxNote = document.getElementById("cart-tax-note");
+    if (cartTaxNote) {
+      cartTaxNote.hidden = !pricesIncludeTax();
+      if (pricesIncludeTax()) cartTaxNote.textContent = taxInfo.note || "Prices include tax";
     }
     cartTotalEl.textContent = moneyLabel(cart.length ? grand : 0, currency);
 
     if (!cart.length) {
-      cartLinesEl.innerHTML =
-        '<p class="cart-empty">Your cart is empty. Add an X-Frame kit from the shop.</p>';
+      const empty = document.createElement("p");
+      empty.className = "cart-empty";
+      empty.textContent = "Your cart is empty. Add an X-Frame kit from the shop.";
+      cartLinesEl.appendChild(empty);
       cartCheckoutBtn.disabled = true;
       return;
     }
 
     if (cartHasMto()) {
-      const banner = document.createElement("div");
-      banner.className = "mto-banner";
-      const units = cartMtoUnits();
-      banner.innerHTML = `<strong>Made to order: ${units} unit(s).</strong> ${escapeHtml(
-        mtoInfo.promise || "Ships within 1 week (all items together)"
-      )} · MTO capacity left: ${mtoInfo.remaining ?? "—"}`;
-      cartLinesEl.appendChild(banner);
+      cartLinesEl.appendChild(mtoBanner());
     }
 
     cartCheckoutBtn.disabled = false;
@@ -686,81 +868,98 @@
     }
   }
 
-  function renderPaySummary() {
-    const currency = cartCurrency();
-    const rows = cart
-      .map((line) => {
-        const v = variationsById.get(line.variationId);
-        if (!v) return "";
-        let note = "";
-        if (v.trackInventory && v.stock != null && line.quantity > v.stock) {
-          const mto = line.quantity - Math.max(0, v.stock);
-          note = ` <span style="color:var(--teal-bright);font-size:0.8rem">(${mto} MTO)</span>`;
-        }
-        return `<div class="modal-summary-row">
-          <span>${escapeHtml(v.productName)} × ${line.quantity}${note}</span>
-          <span>${moneyLabel(v.amount * line.quantity, v.currency)}</span>
-        </div>`;
-      })
-      .join("");
-
-    const mtoNote = cartHasMto()
-      ? `<div class="mto-banner" style="margin-top:0.75rem;margin-bottom:0"><strong>Made to order:</strong> ${escapeHtml(
-          mtoInfo.promise || "Ships within 1 week (all items together)"
-        )}</div>`
-      : "";
-
-    const disc = cartDiscountCents();
-    const discRow =
-      disc > 0
-        ? `<div class="modal-summary-row">
-        <span>${escapeHtml(discountLabelText())}</span>
-        <span>−${moneyLabel(disc, currency)}</span>
-      </div>`
-        : "";
-
-    const promoHint = (() => {
-      const count = cartCount();
-      const promos = (discountInfo.promos || [])
-        .filter((p) => p.minItems != null && p.percent != null)
-        .slice()
-        .sort((a, b) => a.minItems - b.minItems);
-      const next = promos.find((p) => p.minItems > count);
-      if (!next) return "";
-      const need = next.minItems - count;
-      return `<p class="field-hint" style="margin-top:0.65rem">Add ${need} more item${
-        need === 1 ? "" : "s"
-      } for ${next.percent}% off (Square promo)</p>`;
-    })();
-
-    paySummary.innerHTML =
-      rows +
-      discRow +
-      `<div class="modal-summary-row">
-        <span>Shipping (flat rate)</span>
-        <span>${moneyLabel(shippingCents, currency)}</span>
-      </div>
-      <div class="modal-summary-row">
-        <span>${escapeHtml(taxLabelText())}</span>
-        <span>${moneyLabel(cartTaxCents(), currency)}</span>
-      </div>
-      <div class="modal-summary-row total">
-        <span>Total</span>
-        <span>${moneyLabel(cartGrandTotalCents(), currency)}</span>
-      </div>${mtoNote}${promoHint}`;
+  function summaryRow(label, value, className) {
+    const row = document.createElement("div");
+    row.className = "modal-summary-row" + (className ? ` ${className}` : "");
+    const left = document.createElement("span");
+    left.textContent = label;
+    const right = document.createElement("span");
+    right.textContent = value;
+    row.append(left, right);
+    return row;
   }
 
-  function escapeHtml(str) {
-    return String(str)
-      .replace(/&/g, "&amp;")
-      .replace(/</g, "&lt;")
-      .replace(/>/g, "&gt;")
-      .replace(/"/g, "&quot;");
+  function renderPaySummary() {
+    const currency = cartCurrency();
+    paySummary.replaceChildren();
+
+    for (const line of cart) {
+      const v = variationsById.get(line.variationId);
+      if (!v) continue;
+      let label = `${v.productName} × ${line.quantity}`;
+      if (v.trackInventory && v.availability === "mto") label += " (made to order)";
+      else if (v.trackInventory && v.lowStock != null && line.quantity > v.lowStock) {
+        label += ` (${line.quantity - v.lowStock} MTO)`;
+      }
+      paySummary.appendChild(
+        summaryRow(label, moneyLabel(v.amount * line.quantity, v.currency))
+      );
+    }
+
+    const disc = cartDiscountCents();
+    if (disc > 0) {
+      paySummary.appendChild(
+        summaryRow(discountLabelText(), `−${moneyLabel(disc, currency)}`)
+      );
+    }
+    paySummary.appendChild(
+      summaryRow(shippingPhrase || phraseFromCents(shippingCents), moneyLabel(shippingCents, currency))
+    );
+    if (chargesTaxNow()) {
+      paySummary.appendChild(
+        summaryRow(taxLabelText(), moneyLabel(cartTaxCents(), currency))
+      );
+    }
+    paySummary.appendChild(
+      summaryRow("Total", moneyLabel(cartGrandTotalCents(), currency), "total")
+    );
+    if (pricesIncludeTax()) {
+      const note = document.createElement("p");
+      note.className = "tax-note";
+      note.textContent = taxInfo.note || "Prices include tax";
+      paySummary.appendChild(note);
+    }
+
+    if (cartHasMto()) {
+      const banner = mtoBanner();
+      banner.style.marginTop = "0.75rem";
+      banner.style.marginBottom = "0";
+      paySummary.appendChild(banner);
+    }
+
+    const count = cartCount();
+    const promos = (discountInfo.promos || [])
+      .filter((p) => p.minItems != null && p.percent != null)
+      .slice()
+      .sort((a, b) => a.minItems - b.minItems);
+    const next = promos.find((p) => p.minItems > count);
+    if (next) {
+      const need = next.minItems - count;
+      const hint = document.createElement("p");
+      hint.className = "field-hint";
+      hint.style.marginTop = "0.65rem";
+      hint.textContent = `Add ${need} more item${need === 1 ? "" : "s"} for ${next.percent}% off (Square promo)`;
+      paySummary.appendChild(hint);
+    }
+  }
+
+  function focusableIn(root) {
+    return [...root.querySelectorAll(
+      "a[href], button:not([disabled]), input:not([disabled]), select, textarea, iframe, [tabindex]:not([tabindex='-1'])"
+    )].filter((el) => !el.closest("[hidden]"));
   }
 
   function openModal(step) {
+    lastFocus = document.activeElement;
     modal.hidden = false;
-    requestAnimationFrame(() => modal.classList.add("open"));
+    requestAnimationFrame(() => {
+      modal.classList.add("open");
+      // The overlay stays visibility:hidden until .open is painted.
+      requestAnimationFrame(() => {
+        const closeBtn = document.getElementById("checkout-close");
+        (closeBtn || modal).focus();
+      });
+    });
     document.body.style.overflow = "hidden";
     if (step === "pay") showPayStep();
     else showCartStep();
@@ -769,14 +968,17 @@
   function closeModal() {
     modal.classList.remove("open");
     document.body.style.overflow = "";
+    const returnTo = lastFocus;
     setTimeout(() => {
       modal.hidden = true;
+      if (returnTo && typeof returnTo.focus === "function") returnTo.focus();
     }, 200);
   }
 
   async function showCartStep() {
     panelCart.hidden = false;
     panelPay.hidden = true;
+    if (panelConfirm) panelConfirm.hidden = true;
     checkoutTitle.textContent = "Your cart";
     checkoutSubtitle.textContent =
       discountInfo.summary &&
@@ -796,16 +998,23 @@
     }
     panelCart.hidden = true;
     panelPay.hidden = false;
+    if (panelConfirm) panelConfirm.hidden = true;
     checkoutTitle.textContent = "Checkout";
-    checkoutSubtitle.textContent = "Shipping + secure card payment";
+    checkoutSubtitle.textContent = `${shippingPhrase || phraseFromCents(shippingCents)} · US addresses`;
     setStatus("");
-    payButton.disabled = false;
+    setPayBusy(false);
     if (sandboxHint) {
       sandboxHint.hidden = config?.environment === "production";
     }
-    // Instant paint, then Square-confirm totals before they pay
     renderPaySummary();
-    refreshQuote().then(() => renderPaySummary());
+    try {
+      await refreshQuote();
+    } catch {
+      /* local totals stay on screen */
+    }
+    renderPaySummary();
+    const nameField = document.getElementById("ship-name");
+    if (nameField) nameField.focus();
 
     try {
       await ensureCard();
@@ -813,13 +1022,39 @@
       console.error(e);
       setStatus(e.message || "Could not load card form", "error");
     }
+    try {
+      await mountWallets();
+    } catch (e) {
+      console.info("wallet setup skipped", e?.message || e);
+    }
   }
 
-  async function ensureCard() {
+  async function ensurePayments() {
     if (!window.Square) throw new Error("Square.js is not loaded");
     if (!payments) {
       payments = window.Square.payments(config.applicationId, config.locationId);
     }
+    return payments;
+  }
+
+  function ensureAttempt() {
+    const signature = cartSignature();
+    if (!checkoutAttempt || checkoutAttempt.signature !== signature) {
+      checkoutAttempt = {
+        id: crypto.randomUUID(),
+        signature,
+        method: null,
+        sourceId: null,
+        verificationToken: null,
+        submitted: false,
+        networkRetry: false,
+      };
+    }
+    return checkoutAttempt;
+  }
+
+  async function ensureCard() {
+    await ensurePayments();
     if (card) {
       try {
         await card.destroy();
@@ -835,8 +1070,10 @@
       ".input-container": { borderColor: "#2a2a2a", borderRadius: "10px" },
       ".input-container.is-focus": { borderColor: "#5c8a8a" },
       ".input-container.is-error": { borderColor: "#e07070" },
-      ".message-text": { color: "#9a958a" },
-      ".message-icon": { color: "#9a958a" },
+      // Helper copy such as "Enter the zip code" stays invisible. Real
+      // validation uses .is-error ("Enter a valid ZIP code") and stays visible.
+      ".message-text": { color: "transparent" },
+      ".message-icon": { color: "transparent" },
       ".message-text.is-error": { color: "#e07070" },
       ".message-icon.is-error": { color: "#e07070" },
       input: {
@@ -851,6 +1088,7 @@
     try {
       card = await payments.card({ style: cardStyle });
       await card.attach("#card-container");
+      bindCardField(card);
     } catch (styleErr) {
       console.warn("Styled card form failed, falling back:", styleErr);
       try {
@@ -860,17 +1098,232 @@
       }
       card = await payments.card();
       await card.attach("#card-container");
+      bindCardField(card);
     }
+  }
+
+  function bindCardField(instance) {
+    const clearStale = () => {
+      if (payStatus.classList.contains("error")) setStatus("");
+    };
+    try {
+      instance.addEventListener("errorClassRemoved", clearStale);
+      instance.addEventListener("focusClassAdded", clearStale);
+    } catch {
+      /* older SDK builds omit these events */
+    }
+  }
+
+  function setPayBusy(busy) {
+    payInFlight = busy;
+    if (payButton) payButton.disabled = busy;
+    const giftBtn = document.getElementById("gift-card-pay");
+    if (giftBtn) giftBtn.disabled = busy;
+    const back = document.getElementById("pay-back-btn");
+    if (back) back.disabled = busy;
+    const walletsEl = document.getElementById("wallet-buttons");
+    if (walletsEl) {
+      walletsEl.classList.toggle("is-busy", busy);
+      walletsEl.setAttribute("aria-disabled", busy ? "true" : "false");
+    }
+    const giftField = document.getElementById("gift-card-field");
+    if (giftField) giftField.classList.toggle("is-busy", busy);
+    if (form) form.setAttribute("aria-busy", busy ? "true" : "false");
+  }
+
+  /** Card payments need verifyBuyer. Wallets and gift cards verify inside the SDK. */
+  function methodNeedsBuyerVerification(method) {
+    return method === "card";
+  }
+
+  function tokenFromResult(result, fallback) {
+    if (result?.status === "OK" && result.token) return result.token;
+    const detail = result?.errors
+      ? result.errors.map((e) => e.message).join(" ")
+      : result?.status;
+    throw new Error(detail || fallback || "Payment could not be started.");
   }
 
   async function tokenize() {
     if (!card) throw new Error("Card form is not ready. Go back and try again.");
-    const result = await card.tokenize();
-    if (result.status === "OK") return result.token;
-    const detail = result.errors
-      ? result.errors.map((e) => e.message).join(" ")
-      : result.status;
-    throw new Error(detail || "Card tokenization failed");
+    return tokenFromResult(await card.tokenize(), "Card tokenization failed");
+  }
+
+  function paymentRequestDetails() {
+    const totals = displayTotals();
+    return {
+      countryCode: "US",
+      currencyCode: totals.currency || "USD",
+      total: {
+        amount: ((totals.amount || 0) / 100).toFixed(2),
+        label: "Total",
+      },
+    };
+  }
+
+  async function syncPaymentRequest() {
+    await ensurePayments();
+    const details = paymentRequestDetails();
+    if (!paymentRequest) {
+      paymentRequest = payments.paymentRequest(details);
+      return paymentRequest;
+    }
+    if (typeof paymentRequest.update === "function") {
+      paymentRequest.update(details);
+    }
+    return paymentRequest;
+  }
+
+  function syncWalletChrome() {
+    const ids = ["apple-pay-button", "google-pay-button", "cash-app-button"];
+    const anyWallet = ids.some((id) => {
+      const el = document.getElementById(id);
+      return el && !el.hidden;
+    });
+    const gift = document.getElementById("gift-card-field");
+    const any = anyWallet || (gift && !gift.hidden);
+    const divider = document.getElementById("pay-divider");
+    if (divider) divider.hidden = !any;
+  }
+
+  function bindWalletClick(key, el) {
+    if (!el || walletClickBound.has(key)) return;
+    walletClickBound.add(key);
+    el.addEventListener("click", (event) => {
+      event.preventDefault();
+      startWalletPay(key);
+    });
+  }
+
+  function bindCashApp(method) {
+    if (!method || cashAppBound.has(method)) return;
+    method.addEventListener("ontokenization", (event) => {
+      const { tokenResult, error } = event.detail || {};
+      if (payInFlight) return;
+      if (error || tokenResult?.status !== "OK" || !tokenResult.token) {
+        setStatus(error?.message || "Cash App Pay could not be completed.", "error");
+        return;
+      }
+      payWithSource(tokenResult.token, "cashapp");
+    });
+    cashAppBound.add(method);
+  }
+
+  async function mountOne(key, selector, factory) {
+    const el = document.querySelector(selector);
+    if (!el) return;
+    if (wallets[key]) {
+      el.hidden = false;
+      return;
+    }
+    try {
+      const method = await factory();
+      if (!method) throw new Error("unavailable");
+      await method.attach(selector);
+      wallets[key] = method;
+      el.hidden = false;
+      if (key !== "cashAppPay") bindWalletClick(key, el);
+    } catch (e) {
+      console.info(`${key} unavailable`, e?.name || e?.message || e);
+      el.hidden = true;
+      wallets[key] = null;
+    }
+  }
+
+  async function mountDigitalWallets() {
+    await syncPaymentRequest();
+    const attempt = ensureAttempt();
+    if (wallets.cashAppPay && cashAppRef !== attempt.id) {
+      try {
+        await wallets.cashAppPay.destroy();
+      } catch {
+        /* ignore */
+      }
+      wallets.cashAppPay = null;
+      const cashEl = document.getElementById("cash-app-button");
+      if (cashEl) cashEl.replaceChildren();
+    }
+    await mountOne("applePay", "#apple-pay-button", () => payments.applePay(paymentRequest));
+    await mountOne("googlePay", "#google-pay-button", () => payments.googlePay(paymentRequest));
+    await mountOne("cashAppPay", "#cash-app-button", () =>
+      payments.cashAppPay(paymentRequest, {
+        redirectURL: `${window.location.origin}${window.location.pathname}`,
+        referenceId: attempt.id.slice(0, 40),
+      })
+    );
+    if (!wallets.cashAppPay) return;
+    cashAppRef = attempt.id;
+    try {
+      bindCashApp(wallets.cashAppPay);
+    } catch (e) {
+      console.info("cashAppPay listener skipped", e?.name || e?.message || e);
+    }
+  }
+
+  async function mountWallets() {
+    try {
+      await ensurePayments();
+    } catch (e) {
+      console.info("payments unavailable", e?.name || e?.message || e);
+      return;
+    }
+    try {
+      await mountDigitalWallets();
+    } catch (e) {
+      console.info("digital wallets skipped", e?.name || e?.message || e);
+    }
+    try {
+      await mountGiftCard();
+    } catch (e) {
+      console.info("gift card unavailable", e?.name || e?.message || e);
+    }
+    try {
+      syncWalletChrome();
+    } catch (e) {
+      console.info("wallet chrome skipped", e?.name || e?.message || e);
+    }
+  }
+
+  async function mountGiftCard() {
+    const field = document.getElementById("gift-card-field");
+    if (!field || wallets.giftCard) {
+      if (field && wallets.giftCard) field.hidden = false;
+      return;
+    }
+    try {
+      const giftCard = await payments.giftCard();
+      await giftCard.attach("#gift-card-container");
+      wallets.giftCard = giftCard;
+      field.hidden = false;
+    } catch (e) {
+      console.info("gift card unavailable", e?.name || e?.message || e);
+      field.hidden = true;
+    }
+  }
+
+  async function startWalletPay(key) {
+    const method = wallets[key];
+    if (!method || payInFlight) return;
+    const shippingError = validateShipping(readShipping());
+    if (shippingError) {
+      setStatus(shippingError, "error");
+      document.getElementById("ship-name")?.focus();
+      return;
+    }
+    setPayBusy(true);
+    try {
+      setStatus("Confirming total…");
+      const quoted = await fetchAuthoritativeQuote();
+      renderPaySummary();
+      await syncPaymentRequest();
+      setStatus("Processing payment…");
+      const token = tokenFromResult(await method.tokenize());
+      await payWithSource(token, key, { quoted, continueBusy: true });
+    } catch (e) {
+      console.error(e);
+      setStatus(e.message || "Payment could not be completed. Please try again.", "error");
+      setPayBusy(false);
+    }
   }
 
   async function verifyBuyer(token, amountCents, currency) {
@@ -906,86 +1359,257 @@
     };
   }
 
-  async function onSubmit(event) {
-    event.preventDefault();
-    if (!cart.length || !card) return;
-
-    const shipping = readShipping();
+  function validateShipping(shipping) {
     if (
       !shipping.displayName ||
       !shipping.email ||
       !shipping.addressLine1 ||
-      !shipping.city ||
-      !shipping.state ||
-      !shipping.postalCode
+      !shipping.city
     ) {
-      setStatus("Please fill in all required shipping fields.", "error");
+      return "Please fill in all required shipping fields.";
+    }
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(shipping.email)) {
+      return "Enter a valid email address.";
+    }
+    if (shipping.country !== "US") return "We only ship to US addresses.";
+    if (!US_STATES.has(shipping.state)) return "Enter a 2-letter US state code.";
+    if (!ZIP_RE.test(shipping.postalCode)) return "Enter a 5-digit ZIP code.";
+    return "";
+  }
+
+  function cartSignature() {
+    return cart.map((l) => `${l.variationId}:${l.quantity}`).join("|");
+  }
+
+  async function fetchAuthoritativeQuote() {
+    const data = await refreshQuote();
+    if (!data || data.amount == null || !data.currency) {
+      throw new Error("Could not confirm the order total. Please try again.");
+    }
+    if (data.itemCount !== cartCount() || data.subtotal !== cartSubtotalCents()) {
+      throw new Error("Your cart changed. Review the total and try again.");
+    }
+    return data;
+  }
+
+  function showConfirmation(data, mtoLabels) {
+    panelCart.hidden = true;
+    panelPay.hidden = true;
+    if (panelConfirm) panelConfirm.hidden = false;
+    checkoutTitle.textContent = "Order confirmed";
+    checkoutSubtitle.textContent = "Keep this reference until your order ships";
+    if (confirmMessage) {
+      confirmMessage.textContent = data.amountLabel
+        ? `${data.amountLabel} paid. Thank you — your order is in.`
+        : "Thank you — your order is in.";
+    }
+    if (confirmOrder) confirmOrder.textContent = data.orderId || "";
+    if (confirmMto) {
+      if (data.mtoUnits > 0) {
+        confirmMto.hidden = false;
+        const lead = (mtoLabels && mtoLabels.length ? mtoLabels.join(" ") : "") || data.mtoPromise || "Made to order: ships in about 1 week";
+        confirmMto.textContent = mtoConfirmationLine(data.mtoUnits, lead);
+      } else {
+        confirmMto.hidden = true;
+        confirmMto.textContent = "";
+      }
+    }
+    const receiptNote = document.getElementById("confirm-receipt-note");
+    if (confirmReceipt) {
+      if (data.receiptUrl) {
+        confirmReceipt.href = data.receiptUrl;
+        confirmReceipt.hidden = false;
+        if (receiptNote) {
+          const sandbox = config?.environment !== "production";
+          receiptNote.hidden = !sandbox;
+          receiptNote.textContent = sandbox
+            ? "Sandbox receipt previews usually show Square’s page-not-found. Production uses this same link from Square, and those receipts open."
+            : "";
+        }
+      } else {
+        confirmReceipt.hidden = true;
+        confirmReceipt.removeAttribute("href");
+        if (receiptNote) receiptNote.hidden = true;
+      }
+    }
+    setStatus("");
+    const done = document.getElementById("confirm-done");
+    if (done) done.focus();
+    announce("Order confirmed");
+  }
+
+  async function resetPaymentMethods() {
+    const pending = [];
+    const drop = (method) => {
+      if (method && typeof method.destroy === "function") {
+        pending.push(Promise.resolve(method.destroy()).catch(() => {}));
+      }
+    };
+    drop(card);
+    card = null;
+    drop(wallets.applePay);
+    drop(wallets.googlePay);
+    drop(wallets.cashAppPay);
+    drop(wallets.giftCard);
+    wallets.applePay = null;
+    wallets.googlePay = null;
+    wallets.cashAppPay = null;
+    wallets.giftCard = null;
+    cashAppRef = "";
+    paymentRequest = null;
+    await Promise.all(pending);
+    const cardContainer = document.getElementById("card-container");
+    if (cardContainer) cardContainer.innerHTML = "";
+    const giftContainer = document.getElementById("gift-card-container");
+    if (giftContainer) giftContainer.innerHTML = "";
+    const giftField = document.getElementById("gift-card-field");
+    if (giftField) giftField.hidden = true;
+    for (const id of ["apple-pay-button", "google-pay-button", "cash-app-button"]) {
+      const el = document.getElementById(id);
+      if (!el) continue;
+      el.hidden = true;
+      el.replaceChildren();
+    }
+    const divider = document.getElementById("pay-divider");
+    if (divider) divider.hidden = true;
+  }
+
+  async function payWithSource(sourceId, method, opts) {
+    const continueBusy = !!(opts && opts.continueBusy);
+    if ((payInFlight && !continueBusy) || !cart.length || !sourceId) return;
+    const shipping = readShipping();
+    const shippingError = validateShipping(shipping);
+    if (shippingError) {
+      setStatus(shippingError, "error");
+      document.getElementById("ship-name")?.focus();
+      if (continueBusy) setPayBusy(false);
       return;
     }
 
-    const amount = cartGrandTotalCents();
-    const currency = cartCurrency();
+    const attempt = ensureAttempt();
+    if (attempt.submitted && attempt.method && attempt.method !== method && !attempt.networkRetry) {
+      setStatus("Checkout is already processing. Wait a moment and try again.", "error");
+      if (continueBusy) setPayBusy(false);
+      return;
+    }
+    if (attempt.method === method && attempt.sourceId && attempt.networkRetry) {
+      sourceId = attempt.sourceId;
+    } else {
+      attempt.sourceId = sourceId;
+      attempt.method = method;
+      attempt.verificationToken = null;
+    }
 
-    payButton.disabled = true;
-    setStatus("Creating order and processing payment…");
+    setPayBusy(true);
+    const mtoLabels = cartMtoLabels();
+    setStatus("Confirming total…");
 
     try {
-      const sourceId = await tokenize();
-      const verificationToken = await verifyBuyer(sourceId, amount, currency);
+      const quoted =
+        opts?.quoted && opts.quoted.amount != null ? opts.quoted : await fetchAuthoritativeQuote();
+      if (!quoted || quoted.amount == null || !quoted.currency) {
+        throw new Error("Could not confirm the order total. Please try again.");
+      }
+      if (quoted.itemCount !== cartCount() || quoted.subtotal !== cartSubtotalCents()) {
+        throw new Error("Your cart changed. Review the total and try again.");
+      }
+      renderPaySummary();
+      // Gift cards and wallets already authenticated the buyer. verifyBuyer on a
+      // gift-card token waits on a card challenge that never starts (about 30s)
+      // and then continues. Only cards call it.
+      if (methodNeedsBuyerVerification(method) && !attempt.verificationToken) {
+        setStatus("Verifying your card…");
+        attempt.verificationToken = await verifyBuyer(
+          attempt.sourceId,
+          quoted.amount,
+          quoted.currency
+        );
+      }
 
-      const res = await fetch("/api/pay", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          sourceId,
-          verificationToken,
-          items: cart.map((l) => ({
-            variationId: l.variationId,
-            quantity: l.quantity,
-          })),
-          shippingAddress: shipping,
-          buyerEmail: shipping.email,
-        }),
-      });
+      setStatus("Processing payment…");
+      let res;
+      try {
+        attempt.submitted = true;
+        res = await fetch("/api/pay", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            sourceId: attempt.sourceId,
+            verificationToken: attempt.verificationToken,
+            checkoutAttemptId: attempt.id,
+            items: cart.map((l) => ({
+              variationId: l.variationId,
+              quantity: l.quantity,
+            })),
+            shippingAddress: shipping,
+            buyerEmail: shipping.email,
+          }),
+        });
+      } catch (networkErr) {
+        console.error(networkErr);
+        attempt.networkRetry = true;
+        setStatus(
+          "Network error. You can try again — this attempt will not be charged twice.",
+          "error"
+        );
+        return;
+      }
 
       const data = await res.json().catch(() => ({}));
+      if (res.status === 409 && /already processing/i.test(data.error || "")) {
+        setStatus(data.error, "error");
+        return;
+      }
+      checkoutAttempt = null;
       if (!res.ok || data.error) {
-        const detail =
-          data.details?.[0]?.detail ||
-          data.details?.[0]?.code ||
-          data.error ||
-          "Payment failed";
-        throw new Error(detail);
+        throw new Error(data.error || "Payment could not be completed. Please try again.");
       }
 
       cart = [];
       saveCart();
       renderCartLines();
+      // Drop the card, gift card, and wallet instances. Shipping fields stay.
+      await resetPaymentMethods();
+      showConfirmation(data, mtoLabels);
 
-      let msg = `Order placed — ${data.amountLabel} charged. Thank you!`;
-      if (data.orderId) msg += ` Order ${data.orderId.slice(0, 8)}…`;
-      if (data.notified === false && data.notifyError) {
-        msg += " (Shop notify failed — order is still paid in Square.)";
-      }
-      setStatus(msg, "success");
-      payButton.disabled = true;
-
-      // Refresh catalog stock after sale
       try {
         const cat = await fetch("/api/catalog").then((r) => r.json());
         if (cat.products) {
           indexCatalog(cat.products);
-          renderProducts(cat.products);
+          renderCatalog(cat.products, cat.sections);
         }
       } catch {
         /* ignore */
       }
-
-      setTimeout(() => closeModal(), 2800);
     } catch (e) {
       console.error(e);
       setStatus(e.message || "Payment failed", "error");
-      payButton.disabled = false;
+    } finally {
+      setPayBusy(false);
+    }
+  }
+
+  async function onSubmit(event) {
+    event.preventDefault();
+    if (!cart.length || !card || payInFlight) return;
+    const shippingError = validateShipping(readShipping());
+    if (shippingError) {
+      setStatus(shippingError, "error");
+      return;
+    }
+    setPayBusy(true);
+    try {
+      setStatus("Preparing your card…");
+      const attempt = ensureAttempt();
+      const token =
+        attempt.method === "card" && attempt.sourceId && attempt.networkRetry
+          ? attempt.sourceId
+          : await tokenize();
+      await payWithSource(token, "card", { continueBusy: true });
+    } catch (e) {
+      console.error(e);
+      setStatus(e.message || "Payment failed", "error");
+      setPayBusy(false);
     }
   }
 
@@ -1001,15 +1625,24 @@
       if (!configRes.ok) throw new Error("Could not load payment config");
       config = await configRes.json();
       shippingCents = Number(config.shippingCents) || 1000;
+      if (config.shippingPhrase) shippingPhrase = config.shippingPhrase;
+      syncShippingCopy();
       if (config.tax) taxInfo = { ...taxInfo, ...config.tax };
+      syncTaxNote();
       if (config.discounts) discountInfo = { ...discountInfo, ...config.discounts };
       if (config.mto) mtoInfo = { ...mtoInfo, ...config.mto };
 
-      if (config.environment !== "production" && envBadge) {
+      const checkoutOn = config.checkoutEnabled !== false;
+      if (!checkoutOn) {
+        const cartBtn = document.getElementById("cart-open");
+        if (cartBtn) cartBtn.hidden = true;
+      }
+
+      if (checkoutOn && config.environment !== "production" && envBadge) {
         envBadge.hidden = false;
       }
 
-      await loadSquareSdk(config.environment);
+      if (checkoutOn) await loadSquareSdk(config.environment);
 
       if (!catalogRes.ok) {
         const err = await catalogRes.json().catch(() => ({}));
@@ -1019,39 +1652,101 @@
       if (catalog.shippingCents != null) {
         shippingCents = Number(catalog.shippingCents) || shippingCents;
       }
+      if (catalog.shippingPhrase) shippingPhrase = catalog.shippingPhrase;
+      syncShippingCopy();
       if (catalog.tax) taxInfo = { ...taxInfo, ...catalog.tax };
+      syncTaxNote();
       if (catalog.discounts) discountInfo = { ...discountInfo, ...catalog.discounts };
       if (catalog.mto) mtoInfo = { ...mtoInfo, ...catalog.mto };
       const products = catalog.products || [];
       indexCatalog(products);
-      renderProducts(products);
+      renderCatalog(products, catalog.sections);
     } catch (e) {
       console.error(e);
-      grid.innerHTML = `<div class="products-status error">${
-        e.message || "Failed to load products"
-      }</div>`;
+      const status = document.createElement("div");
+      status.className = "products-status error";
+      status.textContent = e.message || "Failed to load products";
+      grid.replaceChildren(status);
     }
   }
+
+  document.getElementById("gift-card-pay")?.addEventListener("click", async () => {
+    if (!wallets.giftCard || payInFlight) return;
+    const shippingError = validateShipping(readShipping());
+    if (shippingError) {
+      setStatus(shippingError, "error");
+      document.getElementById("ship-name")?.focus();
+      return;
+    }
+    setPayBusy(true);
+    try {
+      setStatus("Reading gift card…");
+      const token = tokenFromResult(
+        await wallets.giftCard.tokenize(),
+        "Gift card could not be read."
+      );
+      await payWithSource(token, "giftcard", { continueBusy: true });
+    } catch (e) {
+      console.error(e);
+      setStatus(e.message || "Gift card payment could not be completed.", "error");
+      setPayBusy(false);
+    }
+  });
 
   document.getElementById("cart-open").addEventListener("click", () => openModal("cart"));
   document.getElementById("checkout-close").addEventListener("click", closeModal);
   document.getElementById("cart-continue-btn").addEventListener("click", closeModal);
   document.getElementById("pay-back-btn").addEventListener("click", showCartStep);
+  document.getElementById("confirm-done").addEventListener("click", closeModal);
   cartCheckoutBtn.addEventListener("click", () => {
     if (!cart.length) return;
     showPayStep();
   });
   form.addEventListener("submit", onSubmit);
+  for (const id of [
+    "ship-name",
+    "ship-email",
+    "ship-phone",
+    "ship-line1",
+    "ship-line2",
+    "ship-city",
+    "ship-state",
+    "ship-postal",
+  ]) {
+    document.getElementById(id)?.addEventListener("input", () => {
+      if (payStatus.classList.contains("error")) setStatus("");
+    });
+  }
 
   // Don't close on outside click — too easy to lose checkout progress.
   // Escape: step back from payment → cart; only close fully from the cart view.
   document.addEventListener("keydown", (e) => {
-    if (e.key !== "Escape" || !modal.classList.contains("open")) return;
-    if (panelPay && !panelPay.hidden) {
-      showCartStep();
+    if (!modal.classList.contains("open")) return;
+    if (e.key === "Escape") {
+      if (panelConfirm && !panelConfirm.hidden) {
+        closeModal();
+        return;
+      }
+      if (panelPay && !panelPay.hidden) {
+        if (payInFlight) return;
+        showCartStep();
+        return;
+      }
+      closeModal();
       return;
     }
-    closeModal();
+    if (e.key !== "Tab") return;
+    const nodes = focusableIn(modal);
+    if (!nodes.length) return;
+    const first = nodes[0];
+    const last = nodes[nodes.length - 1];
+    if (e.shiftKey && document.activeElement === first) {
+      e.preventDefault();
+      last.focus();
+    } else if (!e.shiftKey && document.activeElement === last) {
+      e.preventDefault();
+      first.focus();
+    }
   });
 
   if (document.readyState === "loading") {

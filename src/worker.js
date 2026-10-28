@@ -3,20 +3,54 @@
  * Catalog, cart checkout, Square Orders + Payments, inventory, MTO, admin.
  */
 
+import { parseAddress } from "./address.js";
+import { aggregateCartLines, allocateMerged, MAX_CART_LINES, parseQuantity } from "./cart.js";
 import {
-  allocateUnits,
-  consumeMto,
+  catalogFilterFromEnv,
+  collectTrackedVariationIds,
+  decorateVariation,
+  itemAllowed,
+  itemCategoryIds,
+  productSections,
+  presentAtLocation,
+  publicMto,
+  variationTracksInventory,
+} from "./catalog.js";
+import { applySecurityHeaders, shouldNoindex } from "./headers.js";
+import { idempotencyKey, parseAttemptId } from "./idempotency.js";
+import {
+  abortCheckout,
+  clientIp,
+  completeCheckout,
   createAdminToken,
   extractBearer,
   getMtoState,
   isAdminHost,
+  loginClear,
+  loginFail,
+  loginStatus,
   lowStockThreshold,
-  maxOrderable,
+  MtoCounter,
   mtoPromise,
+  passwordsMatch,
+  reserveCheckout,
   resetMto,
   setMtoState,
   verifyAdminToken,
 } from "./mto.js";
+import { discordSafe, headerSafe, plainSafe, telegramSafe } from "./sanitize.js";
+import { paymentErrorMessage } from "./payments.js";
+import { applyOrderTax, taxConfigPublic, totalsFromSquareOrder } from "./tax.js";
+import {
+  applePayAssociation,
+  flatRateShippingPhrase,
+  leadTimeLabel,
+  leadTimePolicySentence,
+  leadTimeRulesFromEnv,
+  leadTimeWeeks,
+} from "./shipping.js";
+
+export { MtoCounter };
 
 const SQUARE_VERSION = "2025-01-23";
 const SHIPPING_CENTS = 1000; // $10.00 flat
@@ -39,8 +73,25 @@ function json(data, status = 200, extraHeaders = {}) {
   });
 }
 
-function error(message, status = 400, details) {
-  return json({ error: message, details }, status);
+function error(message, status = 400) {
+  return json({ error: message }, status);
+}
+
+function clientSafeError(e, fallback, status = 502) {
+  console.error(fallback, e?.message, e?.details || "");
+  if (e?.publicMessage) return error(e.publicMessage, e.status || 400);
+  return error(fallback, status);
+}
+
+function publicFail(message, status = 400) {
+  const err = new Error(message);
+  err.status = status;
+  err.publicMessage = message;
+  return err;
+}
+
+function createLookupCache() {
+  return { discounts: null, objects: new Map() };
 }
 
 async function squareFetch(env, path, { method = "GET", body } = {}) {
@@ -98,42 +149,38 @@ function shippingCents(env) {
   return Number.isFinite(n) && n >= 0 ? Math.round(n) : SHIPPING_CENTS;
 }
 
-function taxPercent(env) {
-  const n = Number(env.TAX_PERCENT);
-  return Number.isFinite(n) && n >= 0 ? n : 6;
-}
-
-function taxName(env) {
-  return (env.TAX_NAME || "Sales Tax").trim() || "Sales Tax";
-}
-
-function taxAppliesToShipping(env) {
-  const v = env.TAX_APPLIES_TO_SHIPPING;
-  if (v === "false" || v === "0") return false;
-  return true; // default: tax merchandise + shipping
-}
-
-function taxConfigPublic(env) {
-  const pct = taxPercent(env);
+function publicLeadTimes(env) {
+  const rules = leadTimeRulesFromEnv(env);
   return {
-    percent: pct,
-    name: taxName(env),
-    appliesToShipping: taxAppliesToShipping(env),
-    label: pct > 0 ? `${pct}%` : "None",
+    defaultWeeks: rules.defaultWeeks,
+    rules: rules.rules,
+    policy: leadTimePolicySentence(rules),
   };
 }
 
-/** Tax estimate when Square discount amount is known (or 0). */
-function estimateTaxCents(env, subtotalCents, shippingCentsAmt, discountCents = 0) {
-  const pct = taxPercent(env);
-  if (pct <= 0) return 0;
-  const merch = Math.max(0, subtotalCents - (discountCents || 0));
-  const base = merch + (taxAppliesToShipping(env) ? shippingCentsAmt : 0);
-  return Math.round((base * pct) / 100);
+function htmlTokens(html, env, request) {
+  const origin = String(env.SITE_ORIGIN || new URL(request.url).origin).replace(/\/$/, "");
+  const phrase = flatRateShippingPhrase(shippingCents(env));
+  const effective = String(env.POLICY_EFFECTIVE_DATE || "October 10, 2026").trim();
+  const email = notifyEmail(env);
+  return html
+    .replaceAll("__SITE_ORIGIN__", origin)
+    .replaceAll("__SHIPPING_PHRASE__", phrase)
+    .replaceAll("__LEAD_TIME_POLICY__", publicLeadTimes(env).policy)
+    .replaceAll("__POLICY_EFFECTIVE__", effective)
+    .replaceAll("__CONTACT_EMAIL__", email);
 }
 
-/** List active catalog discounts for display (manage in Square). */
-async function listCatalogDiscounts(env) {
+/** List active catalog discounts for display (manage in Square). Cached per request. */
+async function listCatalogDiscounts(env, cache) {
+  if (cache) {
+    if (!cache.discounts) cache.discounts = fetchCatalogDiscounts(env);
+    return cache.discounts;
+  }
+  return fetchCatalogDiscounts(env);
+}
+
+async function fetchCatalogDiscounts(env) {
   try {
     const data = await squareFetch(
       env,
@@ -198,7 +245,7 @@ async function listCatalog(env) {
   const objects = [];
   let cursor;
   do {
-    const qs = new URLSearchParams({ types: "ITEM,IMAGE" });
+    const qs = new URLSearchParams({ types: "ITEM,IMAGE,CATEGORY" });
     if (cursor) qs.set("cursor", cursor);
     const data = await squareFetch(env, `/v2/catalog/list?${qs}`);
     objects.push(...(data.objects || []));
@@ -229,15 +276,6 @@ async function batchInventoryCounts(env, variationIds) {
   return map;
 }
 
-/** Track inventory if set on variation or this location override. */
-function variationTracksInventory(vd, locationId) {
-  if (vd?.track_inventory) return true;
-  const override = (vd?.location_overrides || []).find(
-    (o) => o.location_id === locationId
-  );
-  return !!(override && override.track_inventory);
-}
-
 /**
  * Catalog line items for full qty so Square pricing rules/discounts apply
  * (same catalog as POS). MTO units are restored to inventory after payment.
@@ -259,7 +297,7 @@ function buildSquareLineItems(lines) {
 }
 
 /** After payment, put MTO units back on the shelf (Square decremented full qty). */
-async function restoreMtoInventory(env, lines) {
+async function restoreMtoInventory(env, lines, orderId) {
   const now = new Date().toISOString().replace(/\.\d{3}Z$/, ".000Z");
   const changes = [];
   for (const l of lines) {
@@ -283,7 +321,7 @@ async function restoreMtoInventory(env, lines) {
     await squareFetch(env, "/v2/inventory/changes/batch-create", {
       method: "POST",
       body: {
-        idempotency_key: crypto.randomUUID(),
+        idempotency_key: await idempotencyKey(orderId, "restore-mto"),
         changes,
       },
     });
@@ -300,29 +338,15 @@ function buildOrderPayload(env, { lines, currency, shipping, shippingInfo, alloc
     line_items: lineItems,
     service_charges: [
       {
-        name: "Flat rate shipping",
+        name: flatRateShippingPhrase(shipping),
         amount_money: { amount: shipping, currency },
         calculation_phase: "SUBTOTAL_PHASE",
-        taxable: taxAppliesToShipping(env),
+        taxable: false,
       },
     ],
-    ...(taxCfg.percent > 0
-      ? {
-          taxes: [
-            {
-              uid: "SALES_TAX",
-              name: taxCfg.name,
-              percentage: String(taxCfg.percent),
-              scope: "ORDER",
-            },
-          ],
-        }
-      : {}),
-    // Same catalog pricing rules as POS / Square Online
-    pricing_options: {
-      auto_apply_discounts: true,
-    },
   };
+  const appliedTax = applyOrderTax(env, order);
+  Object.assign(taxCfg, appliedTax);
 
   if (shippingInfo) {
     order.reference_id = `web-${Date.now()}`;
@@ -354,7 +378,8 @@ function buildOrderPayload(env, { lines, currency, shipping, shippingInfo, alloc
         (lines || []).reduce((n, l) => n + (l.inStockQty || 0), 0)
       ),
       ship_together: "true",
-      tax_percent: String(taxCfg.percent),
+      tax_mode: taxCfg.mode,
+      tax_percent: taxCfg.chargesTax ? String(taxCfg.percent) : "0",
     };
   }
 
@@ -389,47 +414,68 @@ function summarizeSquareOrder(order, fallback = {}) {
   };
 }
 
-function mapCatalogToProducts(objects, inventoryMap) {
+function mapCatalogToProducts(objects, inventoryMap, env, mto) {
   const images = new Map();
+  const categoryNames = new Map();
   for (const o of objects) {
     if (o.type === "IMAGE" && o.image_data?.url) {
       images.set(o.id, o.image_data.url);
+    } else if (o.type === "CATEGORY" && o.category_data?.name) {
+      categoryNames.set(o.id, o.category_data.name);
     }
   }
+  const leadRules = leadTimeRulesFromEnv(env);
 
+  const locationId = env.SQUARE_LOCATION_ID;
+  const filter = catalogFilterFromEnv(env);
+  const threshold = lowStockThreshold(env);
   const products = [];
   for (const o of objects) {
     if (o.type !== "ITEM" || o.is_deleted) continue;
     const item = o.item_data;
     if (!item || item.is_archived) continue;
+    if (!presentAtLocation(o, locationId)) continue;
 
+    const catIds = itemCategoryIds(item);
+    const catNames = catIds.map((id) => categoryNames.get(id)).filter(Boolean);
+    if (!itemAllowed(o, filter, categoryNames)) continue;
+    const weeks = leadTimeWeeks(
+      { name: item.name, categoryIds: catIds, categoryNames: catNames },
+      leadRules
+    );
+    const mtoLabel = leadTimeLabel(weeks);
     const variations = [];
     for (const v of item.variations || []) {
       if (v.is_deleted) continue;
       const vd = v.item_variation_data || {};
       if (vd.sellable === false) continue;
+      if (!presentAtLocation(v, locationId)) continue;
       const money = vd.price_money;
       if (!money || money.amount == null) continue;
 
-      // locationId passed via inventoryMap.__locationId is awkward; use closure from caller
-      const tracks = variationTracksInventory(vd, inventoryMap.__locationId);
-      const rawStock = tracks
+      const tracks = variationTracksInventory(vd, locationId);
+      const shelf = tracks
         ? inventoryMap.has(v.id)
           ? inventoryMap.get(v.id)
           : 0
         : null;
-      // Never expose negative stock to the storefront
-      const stock = rawStock == null ? null : Math.max(0, rawStock);
 
       variations.push({
-        id: v.id,
-        name: vd.name || "Standard",
-        amount: money.amount,
-        currency: money.currency || "USD",
-        priceLabel: formatMoney(money.amount, money.currency || "USD"),
-        trackInventory: tracks,
-        stock,
-        rawStock,
+        ...decorateVariation(
+          {
+            id: v.id,
+            name: vd.name || "Standard",
+            amount: money.amount,
+            currency: money.currency || "USD",
+            priceLabel: formatMoney(money.amount, money.currency || "USD"),
+            trackInventory: tracks,
+            stock: shelf,
+          },
+          mto,
+          threshold
+        ),
+        leadTimeWeeks: weeks,
+        leadTimeLabel: mtoLabel,
       });
     }
     if (!variations.length) continue;
@@ -448,7 +494,16 @@ function mapCatalogToProducts(objects, inventoryMap) {
       currency: primary.currency,
       defaultVariationId: primary.id,
       trackInventory: primary.trackInventory,
-      stock: primary.stock,
+      lowStock: primary.lowStock,
+      stockDisplay: primary.stockDisplay,
+      stockTone: primary.stockTone,
+      availability: primary.availability,
+      maxQty: primary.maxQty,
+      mtoOpen: !!mto?.open,
+      leadTimeWeeks: weeks,
+      leadTimeLabel: mtoLabel,
+      categoryIds: catIds,
+      categoryNames: catNames,
     });
   }
 
@@ -456,41 +511,42 @@ function mapCatalogToProducts(objects, inventoryMap) {
   return products;
 }
 
+export const CHECKOUT_OFF_MESSAGE =
+  "Online ordering opens soon. Message us at packmulehouse@gmail.com to order.";
+
+/** Online checkout is on only when CHECKOUT_ENABLED is "true". */
+export function checkoutEnabled(env) {
+  return String(env?.CHECKOUT_ENABLED ?? "false").trim().toLowerCase() === "true";
+}
+
 async function handleConfig(env) {
   const ship = shippingCents(env);
   const mto = await getMtoState(env);
   const tax = taxConfigPublic(env);
-  const discounts = await listCatalogDiscounts(env);
+  const cache = createLookupCache();
+  const discounts = await listCatalogDiscounts(env, cache);
   return json({
     applicationId: env.SQUARE_APPLICATION_ID,
     locationId: env.SQUARE_LOCATION_ID,
     environment: env.SQUARE_ENVIRONMENT || "sandbox",
     shippingCents: ship,
     shippingLabel: formatMoney(ship, "USD"),
+    shippingPhrase: flatRateShippingPhrase(ship),
+    leadTimes: publicLeadTimes(env),
     tax,
     discounts,
     lowStockThreshold: lowStockThreshold(env),
-    mto: {
-      enabled: mto.enabled,
-      remaining: mto.remaining,
-      max: mto.max,
-      open: mto.open,
-      promise: mto.promise,
-    },
+    mto: publicMto(mto),
+    checkoutEnabled: checkoutEnabled(env),
+    checkoutOffMessage: CHECKOUT_OFF_MESSAGE,
   });
 }
 
 async function handleCatalog(env) {
+  try {
+  const cache = createLookupCache();
   const objects = await listCatalog(env);
-  const variationIds = [];
-  for (const o of objects) {
-    if (o.type !== "ITEM") continue;
-    for (const v of o.item_data?.variations || []) {
-      if (v.item_variation_data?.track_inventory) {
-        variationIds.push(v.id);
-      }
-    }
-  }
+  const variationIds = collectTrackedVariationIds(objects, env.SQUARE_LOCATION_ID);
 
   let inventoryMap = new Map();
   try {
@@ -498,111 +554,100 @@ async function handleCatalog(env) {
   } catch (e) {
     console.warn("inventory lookup failed", e.message);
   }
-  // So variationTracksInventory can resolve location overrides
-  inventoryMap.__locationId = env.SQUARE_LOCATION_ID;
 
   const mto = await getMtoState(env);
-  const threshold = lowStockThreshold(env);
-  const products = mapCatalogToProducts(objects, inventoryMap).map((p) => {
-    const stock = p.stock;
-    const tracked = p.trackInventory;
-    let stockDisplay = null; // hide by default
-    let stockTone = null; // "fomo" | "mto" | "out"
-    let availability = "in_stock";
-
-    if (tracked && stock != null) {
-      if (stock <= 0) {
-        if (mto.open) {
-          stockDisplay = "Made to order";
-          stockTone = "mto";
-          availability = "mto";
-        } else {
-          stockDisplay = "Currently unavailable";
-          stockTone = "out";
-          availability = "unavailable";
-        }
-      } else if (stock < threshold) {
-        stockDisplay = `Only ${stock} left`;
-        stockTone = "fomo";
-        availability = "low";
-      }
-    }
-
-    const maxQty = maxOrderable(
-      tracked ? stock : null,
-      mto
-    );
-
-    return {
-      ...p,
-      stockDisplay,
-      stockTone,
-      availability,
-      maxQty,
-      mtoOpen: mto.open,
-    };
-  });
+  const products = mapCatalogToProducts(objects, inventoryMap, env, mto);
+  const filter = catalogFilterFromEnv(env);
+  const sections = productSections(products, filter.shop);
 
   return json(
     {
       products,
+      sections,
       count: products.length,
       shippingCents: shippingCents(env),
       shippingLabel: formatMoney(shippingCents(env), "USD"),
+      shippingPhrase: flatRateShippingPhrase(shippingCents(env)),
+      leadTimes: publicLeadTimes(env),
       tax: taxConfigPublic(env),
-      discounts: await listCatalogDiscounts(env),
-      lowStockThreshold: threshold,
-      mto: {
-        enabled: mto.enabled,
-        remaining: mto.remaining,
-        max: mto.max,
-        open: mto.open,
-        promise: mto.promise,
-      },
+      discounts: await listCatalogDiscounts(env, cache),
+      lowStockThreshold: lowStockThreshold(env),
+      mto: publicMto(mto),
     },
     200,
     { "Cache-Control": "public, max-age=10" }
   );
+  } catch (e) {
+    return clientSafeError(e, "Could not load the catalog. Please try again.");
+  }
 }
 
-async function resolveVariationLine(env, variationId, quantity) {
-  const qty = Math.max(1, Math.min(20, Number(quantity) || 1));
-  const catalog = await squareFetch(
-    env,
-    `/v2/catalog/object/${encodeURIComponent(variationId)}`
-  );
+async function getCatalogObject(env, id, cache) {
+  if (cache?.objects.has(id)) return cache.objects.get(id);
+  const pending = squareFetch(env, `/v2/catalog/object/${encodeURIComponent(id)}`);
+  if (cache) cache.objects.set(id, pending);
+  return pending;
+}
 
+async function categoryNamesForItem(env, itemData, cache) {
+  const names = new Map();
+  for (const id of itemCategoryIds(itemData)) {
+    try {
+      const data = await getCatalogObject(env, id, cache);
+      const name = data?.object?.category_data?.name;
+      if (name) names.set(id, name);
+    } catch (e) {
+      console.warn("category lookup failed", e?.message || e);
+    }
+  }
+  return names;
+}
+
+async function resolveVariationLine(env, variationId, quantity, cache) {
+  const parsedQty = parseQuantity(quantity);
+  if (parsedQty.error) throw publicFail(parsedQty.error, 400);
+  const qty = parsedQty.quantity;
+
+  const catalog = await getCatalogObject(env, variationId, cache);
   const obj = catalog.object;
-  if (!obj || obj.type !== "ITEM_VARIATION") {
-    const err = new Error("Invalid product variation");
-    err.status = 400;
-    throw err;
+  if (!obj || obj.type !== "ITEM_VARIATION" || obj.is_deleted) {
+    throw publicFail("This product is not available", 400);
   }
 
   const vd = obj.item_variation_data || {};
-  const money = vd.price_money;
-  if (!money?.amount) {
-    const err = new Error("This product has no fixed price in Square");
-    err.status = 400;
-    throw err;
+  if (vd.sellable === false) {
+    throw publicFail("This product is not available", 400);
+  }
+  const locationId = env.SQUARE_LOCATION_ID;
+  if (!presentAtLocation(obj, locationId)) {
+    throw publicFail("This product is not available at this location", 400);
   }
 
-  let itemName = vd.name || "Item";
-  if (vd.item_id) {
-    try {
-      const parent = await squareFetch(
-        env,
-        `/v2/catalog/object/${encodeURIComponent(vd.item_id)}`
-      );
-      if (parent.object?.item_data?.name) {
-        itemName = parent.object.item_data.name;
-        if (vd.name && vd.name !== "Regular" && vd.name !== "Standard Kit") {
-          itemName = `${itemName} (${vd.name})`;
-        }
-      }
-    } catch {
-      /* ignore */
-    }
+  const money = vd.price_money;
+  if (!money?.amount) {
+    throw publicFail("This product has no fixed price in Square", 400);
+  }
+
+  if (!vd.item_id) throw publicFail("This product is not available", 400);
+  const parent = await getCatalogObject(env, vd.item_id, cache);
+  const item = parent.object;
+  if (!item || item.type !== "ITEM" || item.is_deleted || item.item_data?.is_archived) {
+    throw publicFail("This product is not available", 400);
+  }
+  if (!presentAtLocation(item, locationId)) {
+    throw publicFail("This product is not available at this location", 400);
+  }
+  const filter = catalogFilterFromEnv(env);
+  const categoryNames = filter.shop.length
+    ? await categoryNamesForItem(env, item.item_data, cache)
+    : new Map();
+  if (!itemAllowed(item, filter, categoryNames)) {
+    throw publicFail("This product is not available", 400);
+  }
+
+  let itemName = item.item_data?.name || vd.name || "Item";
+  if (vd.name && vd.name !== "Regular" && vd.name !== "Standard Kit") {
+    itemName = `${itemName} (${vd.name})`;
   }
 
   return {
@@ -612,117 +657,29 @@ async function resolveVariationLine(env, variationId, quantity) {
     currency: money.currency || "USD",
     lineTotal: money.amount * qty,
     itemName,
-    trackInventory: variationTracksInventory(vd, env.SQUARE_LOCATION_ID),
-  };
-}
-
-function parseAddress(body) {
-  const a = body.shippingAddress || body.address || {};
-  const firstName = String(a.firstName || a.first_name || body.firstName || "").trim();
-  const lastName = String(a.lastName || a.last_name || body.lastName || "").trim();
-  const displayName =
-    String(a.displayName || a.name || "").trim() ||
-    [firstName, lastName].filter(Boolean).join(" ").trim();
-  const email = String(
-    a.email || body.buyerEmail || body.email || ""
-  ).trim();
-  const phone = String(a.phone || a.phoneNumber || body.phone || "").trim();
-  const addressLine1 = String(a.addressLine1 || a.line1 || a.address1 || "").trim();
-  const addressLine2 = String(a.addressLine2 || a.line2 || a.address2 || "").trim();
-  const city = String(a.city || a.locality || "").trim();
-  const state = String(
-    a.state || a.administrativeDistrictLevel1 || a.region || ""
-  ).trim();
-  const postalCode = String(a.postalCode || a.postal || a.zip || "").trim();
-  const country = String(a.country || "US").trim().toUpperCase() || "US";
-
-  const missing = [];
-  if (!displayName) missing.push("name");
-  if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) missing.push("email");
-  if (!addressLine1) missing.push("address");
-  if (!city) missing.push("city");
-  if (!state) missing.push("state");
-  if (!postalCode) missing.push("postal code");
-  if (!country) missing.push("country");
-
-  if (missing.length) {
-    return { error: `Missing or invalid shipping fields: ${missing.join(", ")}` };
-  }
-
-  return {
-    displayName,
-    email,
-    phone: phone || undefined,
-    address: {
-      address_line_1: addressLine1,
-      ...(addressLine2 ? { address_line_2: addressLine2 } : {}),
-      locality: city,
-      administrative_district_level_1: state,
-      postal_code: postalCode,
-      country,
-    },
+    trackInventory: variationTracksInventory(vd, locationId),
   };
 }
 
 /**
- * Allocate each line into in-stock vs MTO. Throws if not fulfillable.
- * Mutates lines with .inStockQty, .mtoQty.
+ * Allocate each line into in-stock vs MTO. Lines that share a variation
+ * are merged first so shelf stock is only counted once.
  */
 async function allocateOrderLines(env, lines) {
   const mto = await getMtoState(env);
-  const trackedIds = lines
-    .filter((l) => l.trackInventory)
-    .map((l) => l.variationId);
+  const trackedIds = [...new Set(lines.filter((l) => l.trackInventory).map((l) => l.variationId))];
   let counts = new Map();
   if (trackedIds.length) {
     counts = await batchInventoryCounts(env, trackedIds);
   }
-
-  let totalMto = 0;
-  const problems = [];
-
+  const stockByVariation = {};
   for (const line of lines) {
-    const stock = line.trackInventory
-      ? counts.has(line.variationId)
-        ? counts.get(line.variationId)
-        : 0
-      : null;
-    const alloc = allocateUnits(stock, line.quantity, mto);
-    if (!alloc.ok) {
-      problems.push(`${line.itemName}: ${alloc.error}`);
-      continue;
-    }
-    line.inStockQty = alloc.inStock;
-    line.mtoQty = alloc.mto;
-    line.stockAtOrder = stock;
-    totalMto += alloc.mto;
+    if (!line.trackInventory) stockByVariation[line.variationId] = null;
+    else stockByVariation[line.variationId] = counts.has(line.variationId) ? counts.get(line.variationId) : 0;
   }
-
-  if (problems.length) {
-    const err = new Error(problems.join(" "));
-    err.status = 409;
-    throw err;
-  }
-
-  // Capacity for sum of MTO across cart
-  if (totalMto > 0) {
-    if (!mto.open) {
-      const err = new Error(
-        "Made-to-order is on standby. Reduce quantities to what is in stock."
-      );
-      err.status = 409;
-      throw err;
-    }
-    if (totalMto > mto.remaining) {
-      const err = new Error(
-        `Not enough made-to-order capacity for this cart (need ${totalMto}, ${mto.remaining} left).`
-      );
-      err.status = 409;
-      throw err;
-    }
-  }
-
-  return { totalMto, mto };
+  const result = allocateMerged(lines, stockByVariation, mto);
+  if (result.error) throw publicFail(result.error, result.status || 409);
+  return { lines: result.lines, totalMto: result.totalMto, mto };
 }
 
 /**
@@ -738,35 +695,38 @@ async function notifyMerchant(env, payload) {
   const results = [];
   const errors = [];
 
-  console.log("ORDER_NOTIFY", { subject, text });
+  console.log("ORDER_NOTIFY", { subject: headerSafe(subject, 80) });
 
-  // --- 1) ntfy push (phone / desktop) ---
-  const ntfyTopic =
-    env.NTFY_TOPIC || "packmulehouse-orders-pmh7k2x9";
+  // --- 1) ntfy push (phone / desktop). Topic is a secret; no fallback. ---
+  const ntfyTopic = String(env.NTFY_TOPIC || "").trim();
   const ntfyBase = (env.NTFY_SERVER || "https://ntfy.sh").replace(/\/$/, "");
-  try {
-    const headers = {
-      Title: subject.slice(0, 120),
-      Priority: "high",
-      Tags: "package,shopping_cart",
-      "Content-Type": "text/plain; charset=utf-8",
-    };
-    if (env.NTFY_TOKEN) {
-      headers.Authorization = `Bearer ${env.NTFY_TOKEN}`;
+  if (!ntfyTopic) {
+    console.warn("ntfy skipped: NTFY_TOPIC secret is not set");
+  } else {
+    try {
+      const headers = {
+        Title: headerSafe(subject, 120),
+        Priority: "high",
+        Tags: "package,shopping_cart",
+        "Content-Type": "text/plain; charset=utf-8",
+      };
+      if (env.NTFY_TOKEN) {
+        headers.Authorization = `Bearer ${env.NTFY_TOKEN}`;
+      }
+      const res = await fetch(`${ntfyBase}/${encodeURIComponent(ntfyTopic)}`, {
+        method: "POST",
+        headers,
+        body: plainSafe(text),
+      });
+      if (!res.ok) {
+        const body = await res.text();
+        throw new Error(`ntfy ${res.status}: ${body.slice(0, 200)}`);
+      }
+      results.push({ channel: "ntfy", ok: true });
+    } catch (e) {
+      console.error("ntfy failed", e);
+      errors.push(`ntfy: ${e.message}`);
     }
-    const res = await fetch(`${ntfyBase}/${encodeURIComponent(ntfyTopic)}`, {
-      method: "POST",
-      headers,
-      body: text,
-    });
-    if (!res.ok) {
-      const body = await res.text();
-      throw new Error(`ntfy ${res.status}: ${body.slice(0, 200)}`);
-    }
-    results.push({ channel: "ntfy", ok: true, topic: ntfyTopic });
-  } catch (e) {
-    console.error("ntfy failed", e);
-    errors.push(`ntfy: ${e.message}`);
   }
 
   // --- 2) Discord webhook (rich embed with order fields) ---
@@ -783,6 +743,7 @@ async function notifyMerchant(env, payload) {
         body: JSON.stringify({
           content: payload.discordContent || "**🛒 New Pack Mule House order**",
           embeds: [embed],
+          allowed_mentions: { parse: [] },
         }),
       });
       if (!res.ok) {
@@ -806,7 +767,8 @@ async function notifyMerchant(env, payload) {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             chat_id: env.TELEGRAM_CHAT_ID,
-            text: `${subject}\n\n${text}`.slice(0, 4000),
+            text: telegramSafe(`${subject}\n\n${text}`).slice(0, 4000),
+            disable_web_page_preview: true,
           }),
         }
       );
@@ -825,8 +787,10 @@ async function notifyMerchant(env, payload) {
   if (env.RESEND_API_KEY) {
     try {
       const to = notifyEmail(env);
-      const from =
-        env.EMAIL_FROM || "Pack Mule House <onboarding@resend.dev>";
+      const from = String(env.EMAIL_FROM || "").trim();
+      if (!from) {
+        throw new Error("EMAIL_FROM is not configured");
+      }
       const html =
         payload.html ||
         `<pre style="font-family:sans-serif;white-space:pre-wrap">${escapeHtml(text)}</pre>`;
@@ -839,7 +803,7 @@ async function notifyMerchant(env, payload) {
         body: JSON.stringify({
           from,
           to: [to],
-          subject,
+          subject: headerSafe(subject, 180),
           text,
           html,
           ...(payload.replyTo ? { reply_to: payload.replyTo } : {}),
@@ -860,9 +824,10 @@ async function notifyMerchant(env, payload) {
   if (env.ENABLE_FORMSUBMIT === "true" || env.ENABLE_FORMSUBMIT === "1") {
     try {
       const to = notifyEmail(env);
-      const siteOrigin =
-        env.SITE_ORIGIN ||
-        "https://packmulehouse-website.philip-michael-howard.workers.dev";
+      const siteOrigin = String(env.SITE_ORIGIN || "").trim().replace(/\/$/, "");
+      if (!siteOrigin) {
+        throw new Error("SITE_ORIGIN is not configured");
+      }
       const res = await fetch(
         `https://formsubmit.co/ajax/${encodeURIComponent(to)}`,
         {
@@ -876,10 +841,10 @@ async function notifyMerchant(env, payload) {
           body: JSON.stringify({
             name: "Pack Mule House Website",
             email: payload.replyTo || "orders@packmulehouse.com",
-            _subject: subject,
+            _subject: headerSafe(subject, 180),
             _template: "table",
             _captcha: "false",
-            message: text,
+            message: plainSafe(text),
           }),
         }
       );
@@ -919,6 +884,8 @@ function buildOrderEmail({
   discountLabel,
   tax,
   taxLabel,
+  taxIncluded,
+  taxNote,
   total,
   currency,
   shippingInfo,
@@ -967,9 +934,10 @@ function buildOrderEmail({
     hasDiscount
       ? `Discount (${discountLabel || "Volume"}): -${formatMoney(discount, cur)}`
       : "",
-    `Shipping: ${formatMoney(shipping, cur)} (flat rate)`,
-    `Tax (${taxLabel || "Sales Tax"}): ${formatMoney(tax || 0, cur)}`,
+    `${flatRateShippingPhrase(shipping)} (US orders)`,
+    taxIncluded ? "" : `Tax (${taxLabel || "Sales Tax"}): ${formatMoney(tax || 0, cur)}`,
     `Total charged: ${formatMoney(total, cur)}`,
+    taxIncluded ? taxNote || "Prices include tax" : "",
     hasMto ? `MTO units this order: ${totalMto} · remaining after: ${mtoRemainingAfter}` : "",
     "",
     "Ship to:",
@@ -981,18 +949,24 @@ function buildOrderEmail({
     .filter((line) => line !== "")
     .join("\n");
 
+  const safeName = discordSafe(shippingInfo.displayName);
   const itemsField = lines
     .map((l) => {
       const parts = [];
       if (l.inStockQty) parts.push(`${l.inStockQty} stock`);
       if (l.mtoQty) parts.push(`${l.mtoQty} MTO`);
       const tag = parts.length ? ` · ${parts.join(" + ")}` : "";
-      return `**${l.itemName}** × ${l.quantity}${tag}\n${formatMoney(l.unitAmount, cur)} each → **${formatMoney(l.lineTotal, cur)}**`;
+      return `**${discordSafe(l.itemName)}** × ${l.quantity}${tag}\n${formatMoney(l.unitAmount, cur)} each → **${formatMoney(l.lineTotal, cur)}**`;
     })
     .join("\n\n")
     .slice(0, 1024);
 
-  const shipToField = [...addressLines, ...contactLines]
+  const shipToField = [
+    safeName,
+    ...addressLines.slice(1).map((line) => discordSafe(line)),
+    ...contactLines.map((line) => discordSafe(line)),
+  ]
+    .filter(Boolean)
     .join("\n")
     .slice(0, 1024);
 
@@ -1014,19 +988,25 @@ function buildOrderEmail({
       inline: true,
     });
   }
-  fields.push(
-    {
-      name: "Shipping",
-      value: `${formatMoney(shipping, cur)} flat`,
-      inline: true,
-    },
-    {
+  fields.push({
+    name: flatRateShippingPhrase(shipping),
+    value: "US orders",
+    inline: true,
+  });
+  if (!taxIncluded) {
+    fields.push({
       name: taxLabel || "Sales Tax",
       value: formatMoney(tax || 0, cur),
       inline: true,
-    },
-    { name: "Total paid", value: `**${totalLabel}**`, inline: true }
-  );
+    });
+  }
+  fields.push({
+    name: "Total paid",
+    value: taxIncluded
+      ? `**${totalLabel}**\n${taxNote || "Prices include tax"}`
+      : `**${totalLabel}**`,
+    inline: true,
+  });
 
   if (hasMto) {
     fields.push({
@@ -1040,10 +1020,10 @@ function buildOrderEmail({
     { name: "Ship to", value: shipToField || "—", inline: false },
     {
       name: "Customer email",
-      value: shippingInfo.email || "—",
+      value: discordSafe(shippingInfo.email) || "—",
       inline: true,
     },
-    { name: "Phone", value: shippingInfo.phone || "—", inline: true },
+    { name: "Phone", value: discordSafe(shippingInfo.phone) || "—", inline: true },
     { name: "Order ID", value: `\`${orderId || "—"}\``, inline: false },
     { name: "Payment ID", value: `\`${paymentId || "—"}\``, inline: false }
   );
@@ -1068,37 +1048,36 @@ function buildOrderEmail({
   };
 
   return {
-    subject: `[PMH]${hasMto ? " MTO" : ""} New order ${totalLabel} — ${shippingInfo.displayName}`,
-    text,
+    subject: headerSafe(
+      `[PMH]${hasMto ? " MTO" : ""} New order ${totalLabel} — ${shippingInfo.displayName}`,
+      180
+    ),
+    text: plainSafe(text),
     replyTo: shippingInfo.email,
     discordEmbed,
     discordContent: hasMto
-      ? `**🛠 MTO order ${totalLabel}** from **${shippingInfo.displayName}** — ship all within 1 week`
-      : `**🛒 New order ${totalLabel}** from **${shippingInfo.displayName}**`,
+      ? `**🛠 MTO order ${totalLabel}** from **${safeName}** — ship all within 1 week`
+      : `**🛒 New order ${totalLabel}** from **${safeName}**`,
   };
 }
 
-async function resolveCartLines(env, rawItems) {
-  const lines = [];
-  for (const line of rawItems) {
-    const variationId = line.variationId || line.variation_id;
-    if (!variationId) {
-      const err = new Error("Each cart line needs a variationId");
-      err.status = 400;
-      throw err;
-    }
-    lines.push(await resolveVariationLine(env, variationId, line.quantity));
+async function resolveCartLines(env, rawItems, cache = createLookupCache()) {
+  const agg = aggregateCartLines(rawItems, { maxLines: MAX_CART_LINES });
+  if (agg.error) throw publicFail(agg.error, 400);
+  const resolved = [];
+  for (const item of agg.items) {
+    resolved.push(
+      await resolveVariationLine(env, item.variationId, item.quantity, cache)
+    );
   }
-  const currency = lines[0]?.currency || "USD";
-  for (const line of lines) {
+  const currency = resolved[0]?.currency || "USD";
+  for (const line of resolved) {
     if (line.currency !== currency) {
-      const err = new Error("All cart items must share the same currency");
-      err.status = 400;
-      throw err;
+      throw publicFail("All cart items must share the same currency", 400);
     }
   }
-  const allocation = await allocateOrderLines(env, lines);
-  return { lines, currency, allocation };
+  const allocation = await allocateOrderLines(env, resolved);
+  return { lines: allocation.lines, currency, allocation };
 }
 
 /** Preview totals using Square CalculateOrder (same discounts as POS). */
@@ -1135,38 +1114,43 @@ async function handleQuote(request, env) {
       method: "POST",
       body: { order },
     });
-    const o = calc.order;
-    const discount = o.total_discount_money?.amount || 0;
-    const tax = o.total_tax_money?.amount || 0;
-    const amount = o.total_money?.amount || 0;
-    const applied = (o.discounts || []).map((d) => ({
-      name: d.name,
-      percentage: d.percentage,
-      amount: d.applied_money?.amount || 0,
-      catalogObjectId: d.catalog_object_id || null,
-    }));
+    const summed = totalsFromSquareOrder(calc.order, { subtotal, shipping, env });
+    if (!summed.matchesSquare) {
+      console.warn("Square quote total does not match subtotal - discount + shipping + tax", {
+        expected: summed.expected,
+        amount: summed.amount,
+        squareTax: calc.order?.total_tax_money?.amount || 0,
+        mode: summed.taxCfg.mode,
+      });
+    }
+    const discount = summed.discount;
+    const tax = summed.tax;
+    const amount = summed.amount;
     return json({
       ok: true,
       subtotal,
       shipping,
       discount,
-      discountLabel: applied.map((a) => a.name).filter(Boolean).join(", ") || null,
+      discountLabel: summed.discountLabel,
       tax,
-      taxLabel: `${taxCfg.name} (${taxCfg.label})`,
+      taxLabel: taxCfg.chargesTax ? `${taxCfg.name} (${taxCfg.label})` : null,
+      taxMode: taxCfg.mode,
+      taxIncluded: taxCfg.included,
+      taxNote: taxCfg.note || null,
       amount,
-      currency,
-      amountLabel: formatMoney(amount, currency),
+      currency: summed.currency || currency,
+      amountLabel: formatMoney(amount, summed.currency || currency),
       shippingLabel: formatMoney(shipping, currency),
       discountLabelMoney: discount
         ? `−${formatMoney(discount, currency)}`
         : null,
-      taxAmountLabel: formatMoney(tax, currency),
-      appliedDiscounts: applied,
+      taxAmountLabel: taxCfg.chargesTax ? formatMoney(tax, currency) : null,
+      appliedDiscounts: summed.appliedDiscounts,
       mtoUnits: allocation.totalMto || 0,
       itemCount: lines.reduce((n, l) => n + l.quantity, 0),
     });
   } catch (e) {
-    return error(e.message || "Quote failed", e.status || 502, e.details);
+    return clientSafeError(e, "Could not calculate the total. Please try again.");
   }
 }
 
@@ -1195,9 +1179,11 @@ async function handlePay(request, env) {
     ];
   }
 
-  if (!sourceId) return error("Missing sourceId (card token)");
+  if (!sourceId) return error("Missing card token");
   if (!rawItems?.length) return error("Cart is empty");
-  if (rawItems.length > 25) return error("Too many line items");
+
+  const attemptId = parseAttemptId(body.checkoutAttemptId || body.checkout_attempt_id);
+  if (!attemptId) return error("Missing checkout attempt");
 
   const shippingInfo = parseAddress(body);
   if (shippingInfo.error) return error(shippingInfo.error);
@@ -1211,11 +1197,7 @@ async function handlePay(request, env) {
     currency = resolved.currency;
     allocation = resolved.allocation;
   } catch (e) {
-    return error(
-      e.message || "Product not found in Square catalog",
-      e.status || 404,
-      e.details
-    );
+    return clientSafeError(e, "Could not prepare this cart. Please try again.");
   }
 
   const subtotal = lines.reduce((sum, line) => sum + line.lineTotal, 0);
@@ -1223,91 +1205,79 @@ async function handlePay(request, env) {
   const taxCfg = taxConfigPublic(env);
   if (subtotal <= 0) return error("Invalid cart total");
 
-  // Reserve MTO capacity BEFORE charging so two concurrent checkouts can't oversell the pool
-  let mtoAfter = allocation.mto;
-  let mtoReserved = 0;
+  let gate;
   try {
-    if (allocation.totalMto > 0) {
-      mtoAfter = await consumeMto(env, allocation.totalMto);
-      mtoReserved = allocation.totalMto;
-    }
+    gate = await reserveCheckout(env, attemptId, allocation.totalMto || 0);
   } catch (e) {
-    return error(e.message, e.status || 409, e.details);
+    return clientSafeError(e, "Could not reserve made-to-order capacity. Please try again.");
+  }
+  if (gate.replay && gate.result) return json(gate.result);
+  if (gate.busy) {
+    return error("Checkout is already processing. Wait a moment and try again.", 409);
+  }
+  const attemptToken = gate.token;
+  const mtoAfter = gate.state || allocation.mto;
+
+  async function failCheckout(e, fallback, status) {
+    const aborted = await abortCheckout(env, attemptId, attemptToken).catch((err) => {
+      console.error("Failed to release checkout reservation", err);
+      return { owned: false };
+    });
+    return { aborted, response: clientSafeError(e, fallback, status) };
   }
 
-  async function releaseMtoReservation() {
-    if (mtoReserved <= 0 || !env.MTO_STATE) return;
-    try {
-      const state = await getMtoState(env);
-      const next = Math.min(state.max, state.remaining + mtoReserved);
-      await env.MTO_STATE.put("remaining", String(next));
-      if (next > 0 && !state.enabled) {
-        await env.MTO_STATE.put("enabled", "true");
-      }
-      mtoReserved = 0;
-    } catch (e) {
-      console.error("Failed to release MTO reservation", e);
-    }
-  }
-
-  // 1) Create Square Order — catalog lines + auto-applied Square discounts + tax
   let order;
   try {
     const lineItems = buildSquareLineItems(lines);
     if (!lineItems.length) {
-      await releaseMtoReservation();
-      return error("No fulfillable line items");
+      const failed = await failCheckout(publicFail("No fulfillable line items"), "No fulfillable line items");
+      return failed.response;
     }
-
-    const orderBody = {
-      idempotency_key: crypto.randomUUID(),
-      order: buildOrderPayload(env, {
-        lines,
-        currency,
-        shipping,
-        shippingInfo,
-        allocation,
-        taxCfg,
-      }),
-    };
 
     const created = await squareFetch(env, "/v2/orders", {
       method: "POST",
-      body: orderBody,
+      body: {
+        idempotency_key: await idempotencyKey(attemptId, "order"),
+        order: buildOrderPayload(env, {
+          lines,
+          currency,
+          shipping,
+          shippingInfo,
+          allocation,
+          taxCfg,
+        }),
+      },
     });
     order = created.order;
   } catch (e) {
     console.error("CreateOrder failed", e.details || e.message);
-    await releaseMtoReservation();
-    return error(
-      e.message || "Could not create Square order",
-      e.status || 502,
-      e.details
-    );
+    return (await failCheckout(e, "Could not complete checkout. Please try again.")).response;
   }
 
   const orderTotal = order.total_money?.amount;
   if (orderTotal == null) {
-    await releaseMtoReservation();
-    return error("Square order missing total", 502);
+    return (await failCheckout(null, "Could not complete checkout. Please try again.")).response;
   }
 
-  const discountCollected = order.total_discount_money?.amount || 0;
-  const taxCollected = order.total_tax_money?.amount || 0;
-  const appliedDiscountNames = (order.discounts || [])
-    .map((d) => d.name)
-    .filter(Boolean);
+  const summed = totalsFromSquareOrder(order, { subtotal, shipping, env });
+  if (!summed.matchesSquare) {
+    console.warn("Square order total does not match subtotal - discount + shipping + tax", {
+      expected: summed.expected,
+      amount: summed.amount,
+      squareTax: order.total_tax_money?.amount || 0,
+      mode: taxCfg.mode,
+    });
+  }
+  const discountCollected = summed.discount;
+  const taxCollected = summed.tax;
+  const appliedDiscountNames = summed.discountLabel ? summed.discountLabel.split(", ") : [];
 
-  // 2) Pay the order
   let payment;
   try {
-    const mtoNote =
-      allocation.totalMto > 0
-        ? ` · MTO ${allocation.totalMto} unit(s)`
-        : "";
+    const mtoNote = allocation.totalMto > 0 ? ` · MTO ${allocation.totalMto} unit(s)` : "";
     const paymentBody = {
       source_id: sourceId,
-      idempotency_key: crypto.randomUUID(),
+      idempotency_key: await idempotencyKey(attemptId, "payment"),
       amount_money: {
         amount: orderTotal,
         currency: order.total_money.currency || currency,
@@ -1318,85 +1288,56 @@ async function handlePay(request, env) {
       buyer_email_address: shippingInfo.email,
       note: `Pack Mule House web order ${order.id}${mtoNote}`,
     };
-    if (verificationToken) {
-      paymentBody.verification_token = verificationToken;
-    }
+    if (verificationToken) paymentBody.verification_token = verificationToken;
 
     const paid = await squareFetch(env, "/v2/payments", {
       method: "POST",
       body: paymentBody,
     });
     payment = paid.payment;
-    // Payment succeeded — keep MTO reservation (already consumed)
-    mtoReserved = 0;
-    // Put MTO units back in stock (catalog lines decremented full qty for discounts)
-    await restoreMtoInventory(env, lines);
+    await restoreMtoInventory(env, lines, order.id);
   } catch (e) {
+    // Log Square's code and detail. The client only gets a mapped sentence.
     console.error("Pay order failed", e.details || e.message);
-    await releaseMtoReservation();
-    // Best-effort: cancel open order so it doesn't hang unpaid
-    try {
-      await squareFetch(env, `/v2/orders/${order.id}`, {
-        method: "PUT",
-        body: {
-          order: {
-            version: order.version,
-            state: "CANCELED",
-            location_id: env.SQUARE_LOCATION_ID,
+    const friendly = paymentErrorMessage(e?.details);
+    const failed = await failCheckout(
+      e,
+      friendly || "Payment could not be completed. Please try again.",
+      friendly ? 400 : undefined
+    );
+    if (failed.aborted?.owned && order?.id) {
+      try {
+        await squareFetch(env, `/v2/orders/${order.id}`, {
+          method: "PUT",
+          body: {
+            order: {
+              version: order.version,
+              state: "CANCELED",
+              location_id: env.SQUARE_LOCATION_ID,
+            },
+            idempotency_key: await idempotencyKey(order.id, "cancel"),
           },
-          idempotency_key: crypto.randomUUID(),
-        },
-      });
-    } catch (cancelErr) {
-      console.warn("Could not cancel unpaid order", cancelErr.message);
+        });
+      } catch (cancelErr) {
+        console.warn("Could not cancel unpaid order", cancelErr.message);
+      }
     }
-    return error(e.message || "Payment failed", e.status || 502, e.details);
+    return failed.response;
   }
 
-  // 3) Merchant notifications (non-fatal if a channel fails)
-  let notifyResult = null;
-  let notifyError = null;
-  try {
-    const mail = buildOrderEmail({
-      lines,
-      shipping,
-      subtotal,
-      discount: discountCollected,
-      discountLabel: appliedDiscountNames.length
-        ? appliedDiscountNames.join(", ")
-        : null,
-      tax: taxCollected,
-      taxLabel: `${taxCfg.name} (${taxCfg.label})`,
-      total: orderTotal,
-      currency: order.total_money.currency || currency,
-      shippingInfo,
-      orderId: order.id,
-      paymentId: payment?.id,
-      environment: env.SQUARE_ENVIRONMENT || "sandbox",
-      totalMto: allocation.totalMto,
-      mtoRemainingAfter: mtoAfter?.remaining ?? allocation.mto?.remaining,
-      mtoPromiseText: mtoPromise(env),
-    });
-    notifyResult = await notifyMerchant(env, mail);
-  } catch (e) {
-    notifyError = e.message;
-    console.error("Merchant notify failed", e);
-  }
-
-  const channelsOk = (notifyResult?.results || []).map((r) => r.channel);
-
-  return json({
+  const payload = {
     ok: true,
     orderId: order.id,
     paymentId: payment?.id,
     status: payment?.status,
+    // Square's receipt_url as returned. Production opens squareup.com receipts.
+    // Sandbox returns a squareupsandbox.com/receipt/preview link that Square
+    // does not host (their docs: receipts aren't generated in sandbox).
     receiptUrl: payment?.receipt_url || null,
     subtotal,
     shipping,
     discount: discountCollected,
-    discountLabel: appliedDiscountNames.length
-      ? appliedDiscountNames.join(", ")
-      : null,
+    discountLabel: appliedDiscountNames.length ? appliedDiscountNames.join(", ") : null,
     appliedDiscounts: (order.discounts || []).map((d) => ({
       name: d.name,
       percentage: d.percentage,
@@ -1404,16 +1345,16 @@ async function handlePay(request, env) {
       catalogObjectId: d.catalog_object_id || null,
     })),
     tax: taxCollected,
-    taxLabel: `${taxCfg.name} (${taxCfg.label})`,
-    taxPercent: taxCfg.percent,
+    taxLabel: taxCfg.chargesTax ? `${taxCfg.name} (${taxCfg.label})` : null,
+    taxPercent: taxCfg.chargesTax ? taxCfg.percent : 0,
+    taxMode: taxCfg.mode,
+    taxIncluded: taxCfg.included,
+    taxNote: taxCfg.note || null,
     amount: orderTotal,
     currency: order.total_money.currency || currency,
-    amountLabel: formatMoney(
-      orderTotal,
-      order.total_money.currency || currency
-    ),
+    amountLabel: formatMoney(orderTotal, order.total_money.currency || currency),
     shippingLabel: formatMoney(shipping, currency),
-    taxAmountLabel: formatMoney(taxCollected, currency),
+    taxAmountLabel: taxCfg.chargesTax ? formatMoney(taxCollected, currency) : null,
     items: lines.map((l) => ({
       variationId: l.variationId,
       itemName: l.itemName,
@@ -1426,14 +1367,44 @@ async function handlePay(request, env) {
     itemCount: lines.reduce((n, l) => n + l.quantity, 0),
     mtoUnits: allocation.totalMto || 0,
     mtoPromise: mtoPromise(env),
-    mtoRemaining: mtoAfter?.remaining,
     shipTogether: true,
-    notified: channelsOk.length > 0,
-    notifyChannels: channelsOk,
-    notifyError: notifyError || undefined,
-    emailSent: channelsOk.includes("resend") || channelsOk.includes("formsubmit"),
-    emailError: notifyError || undefined,
-  });
+    notified: false,
+  };
+
+  try {
+    const mail = buildOrderEmail({
+      lines,
+      shipping,
+      subtotal,
+      discount: discountCollected,
+      discountLabel: payload.discountLabel,
+      tax: taxCollected,
+      taxLabel: taxCfg.chargesTax ? `${taxCfg.name} (${taxCfg.label})` : null,
+      taxIncluded: taxCfg.included,
+      taxNote: taxCfg.note || null,
+      total: orderTotal,
+      currency: payload.currency,
+      shippingInfo,
+      orderId: order.id,
+      paymentId: payment?.id,
+      environment: env.SQUARE_ENVIRONMENT || "sandbox",
+      totalMto: allocation.totalMto,
+      mtoRemainingAfter: mtoAfter?.remaining ?? allocation.mto?.remaining,
+      mtoPromiseText: mtoPromise(env),
+    });
+    const notifyResult = await notifyMerchant(env, mail);
+    payload.notified = (notifyResult?.results || []).length > 0;
+  } catch (e) {
+    console.error("Merchant notify failed", e);
+  }
+
+  try {
+    await completeCheckout(env, attemptId, attemptToken, payload);
+  } catch (e) {
+    console.error("Failed to store checkout attempt", e);
+  }
+
+  return json(payload);
 }
 
 async function requireAdmin(request, env) {
@@ -1452,13 +1423,47 @@ async function handleAdminLogin(request, env) {
     return error("Invalid JSON");
   }
   if (!env.ADMIN_PASSWORD) {
-    return error("ADMIN_PASSWORD is not configured on the server", 500);
+    return error("Admin sign-in is not configured", 500);
   }
-  if (!body.password || body.password !== env.ADMIN_PASSWORD) {
+  if (!env.ADMIN_SESSION_SECRET) {
+    return error("Admin sign-in is not configured", 500);
+  }
+  if (!env.MTO_COUNTER) {
+    return error("Admin sign-in is not configured", 500);
+  }
+
+  const ip = clientIp(request);
+  let status;
+  try {
+    status = await loginStatus(env, ip);
+  } catch (e) {
+    console.error("login status failed", e);
+    return error("Admin sign-in is unavailable", 503);
+  }
+  const password = String(body.password ?? "");
+  const matches = await passwordsMatch(password, env.ADMIN_PASSWORD);
+  if (status.locked) {
+    return error("Too many sign-in attempts. Try again later.", 429);
+  }
+  if (!password || !matches) {
+    try {
+      const failed = await loginFail(env, ip);
+      if (failed.locked) {
+        return error("Too many sign-in attempts. Try again later.", 429);
+      }
+    } catch (e) {
+      console.error("login fail counter failed", e);
+    }
     return error("Invalid password", 401);
   }
-  const token = await createAdminToken(env);
-  return json({ ok: true, token, expiresInHours: 12 });
+  try {
+    await loginClear(env, ip);
+    const token = await createAdminToken(env);
+    return json({ ok: true, token, expiresInHours: 12 });
+  } catch (e) {
+    console.error("admin token failed", e);
+    return error("Admin sign-in is not configured", 500);
+  }
 }
 
 async function handleAdminStatus(request, env) {
@@ -1507,6 +1512,15 @@ function isHtmlOrScript(pathname) {
   );
 }
 
+/** Always fetch a full asset body. A 304 would reuse the cached CSP. */
+function unconditionalAssetRequest(url, request) {
+  const headers = new Headers(request.headers);
+  headers.delete("If-None-Match");
+  headers.delete("If-Modified-Since");
+  headers.delete("If-Range");
+  return new Request(url, { method: "GET", headers });
+}
+
 async function serveAsset(request, env, rewritePath) {
   if (!env.ASSETS) {
     return error("Not found", 404);
@@ -1535,7 +1549,7 @@ async function serveAsset(request, env, rewritePath) {
     const u = new URL(request.url);
     u.pathname = p.startsWith("/") ? p : `/${p}`;
     usedPath = u.pathname;
-    const assetRequest = new Request(u.toString(), request);
+    const assetRequest = unconditionalAssetRequest(u.toString(), request);
     res = await env.ASSETS.fetch(assetRequest);
     if (res.status === 200) break;
     // Follow a single assets redirect to another path
@@ -1550,7 +1564,7 @@ async function serveAsset(request, env, rewritePath) {
         for (const c of candidates) {
           const u2 = new URL(request.url);
           u2.pathname = c;
-          const r2 = await env.ASSETS.fetch(new Request(u2.toString(), request));
+          const r2 = await env.ASSETS.fetch(unconditionalAssetRequest(u2.toString(), request));
           if (r2.status === 200) {
             res = r2;
             usedPath = c;
@@ -1564,10 +1578,16 @@ async function serveAsset(request, env, rewritePath) {
 
   if (res && isHtmlOrScript(usedPath) && res.status === 200) {
     const headers = new Headers(res.headers);
-    headers.set("Cache-Control", "no-cache, must-revalidate");
-    // Ensure HTML content-type even if assets omits it
-    if (usedPath.endsWith(".html") || usedPath === "/" || usedPath === "/admin") {
+    const isHtml =
+      usedPath.endsWith(".html") || usedPath === "/" || usedPath === "/admin";
+    // The document is the CSP. no-store keeps a previous deploy's policy
+    // from sticking to a cached page. There is no <meta> CSP to diverge from.
+    headers.set("Cache-Control", isHtml ? "no-store" : "no-cache, must-revalidate");
+    if (isHtml) headers.set("CDN-Cache-Control", "no-store");
+    if (isHtml) {
       headers.set("Content-Type", "text/html; charset=utf-8");
+      const html = htmlTokens(await res.text(), env, request);
+      return new Response(html, { status: res.status, headers });
     }
     return new Response(res.body, {
       status: res.status,
@@ -1591,70 +1611,117 @@ async function handleNotifyTest(env) {
       ].join("\n"),
       replyTo: notifyEmail(env),
     });
+    if (result.errors?.length) console.error("notify test partial", result.errors);
     return json({
       ok: true,
       channels: result.results.map((r) => r.channel),
-      errors: result.errors,
     });
   } catch (e) {
-    return error(e.message || "Notify test failed", 502);
+    console.error("notify test failed", e);
+    return error("Notification test failed", 502);
   }
+}
+
+async function route(request, env, url) {
+  const adminHost = isAdminHost(url.hostname);
+
+  if (url.pathname === "/robots.txt") {
+    const body = shouldNoindex(env, url.hostname)
+      ? "User-agent: *\nDisallow: /\n"
+      : "User-agent: *\nAllow: /\n";
+    return new Response(body, {
+      headers: {
+        "Content-Type": "text/plain; charset=utf-8",
+        "Cache-Control": "no-store",
+      },
+    });
+  }
+
+  // Original brand file is kept out of public/. Refuse the old URL too.
+  if (url.pathname === "/logo.png") return error("Not found", 404);
+
+  if (url.pathname === "/.well-known/apple-developer-merchantid-domain-association") {
+    const body = applePayAssociation(env);
+    if (!body.trim()) {
+      return new Response("Apple Pay domain association is not configured.\n", {
+        status: 404,
+        headers: { "Content-Type": "text/plain; charset=utf-8", "Cache-Control": "no-store" },
+      });
+    }
+    return new Response(body, {
+      status: 200,
+      headers: { "Content-Type": "text/plain", "Cache-Control": "no-cache" },
+    });
+  }
+
+  if (url.pathname === "/api/admin/login" && request.method === "POST") {
+    return handleAdminLogin(request, env);
+  }
+  if (url.pathname === "/api/admin/status" && request.method === "POST") {
+    return handleAdminStatus(request, env);
+  }
+  if (url.pathname === "/api/admin/mto" && request.method === "POST") {
+    return handleAdminMto(request, env);
+  }
+
+  if (url.pathname === "/api/config") {
+    return handleConfig(env);
+  }
+  if (url.pathname === "/api/catalog") {
+    return handleCatalog(env);
+  }
+  if (
+    (url.pathname === "/api/pay" || url.pathname === "/api/quote") &&
+    !checkoutEnabled(env)
+  ) {
+    return error(CHECKOUT_OFF_MESSAGE, 503);
+  }
+  if (url.pathname === "/api/pay") {
+    return handlePay(request, env);
+  }
+  if (url.pathname === "/api/quote" && request.method === "POST") {
+    return handleQuote(request, env);
+  }
+  if (url.pathname === "/api/notify-test" && request.method === "POST") {
+    const denied = await requireAdmin(request, env);
+    if (denied) return denied;
+    return handleNotifyTest(env);
+  }
+
+  if (adminHost) {
+    return serveAsset(request, env, "/pmh-console.html");
+  }
+
+  if (
+    url.pathname === "/admin" ||
+    url.pathname === "/admin/" ||
+    url.pathname === "/admin.html" ||
+    url.pathname === "/pmh-console.html"
+  ) {
+    return serveAsset(request, env, "/pmh-console.html");
+  }
+
+  return serveAsset(request, env);
 }
 
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
-    const adminHost = isAdminHost(url.hostname);
-
+    let response;
     try {
-      // --- Admin API ---
-      if (url.pathname === "/api/admin/login" && request.method === "POST") {
-        return handleAdminLogin(request, env);
-      }
-      if (url.pathname === "/api/admin/status" && request.method === "POST") {
-        return handleAdminStatus(request, env);
-      }
-      if (url.pathname === "/api/admin/mto" && request.method === "POST") {
-        return handleAdminMto(request, env);
-      }
-
-      // --- Public API ---
-      if (url.pathname === "/api/config") {
-        return handleConfig(env);
-      }
-      if (url.pathname === "/api/catalog") {
-        return handleCatalog(env);
-      }
-      if (url.pathname === "/api/pay") {
-        return handlePay(request, env);
-      }
-      if (url.pathname === "/api/quote" && request.method === "POST") {
-        return handleQuote(request, env);
-      }
-      if (url.pathname === "/api/notify-test" && request.method === "POST") {
-        return handleNotifyTest(env);
-      }
-
-      // Admin host: serve admin app for all non-API paths
-      // Asset filename avoids Workers Assets "clean URL" redirects on /admin
-      if (adminHost) {
-        return serveAsset(request, env, "/pmh-console.html");
-      }
-
-      // Path-based admin (works on workers.dev today)
-      if (
-        url.pathname === "/admin" ||
-        url.pathname === "/admin/" ||
-        url.pathname === "/admin.html" ||
-        url.pathname === "/pmh-console.html"
-      ) {
-        return serveAsset(request, env, "/pmh-console.html");
-      }
-
-      return serveAsset(request, env);
+      response = await route(request, env, url);
     } catch (e) {
       console.error(e);
-      return error(e.message || "Server error", 500);
+      response = e?.publicMessage
+        ? error(e.publicMessage, e.status || 400)
+        : error("Server error", 500);
     }
+    const headers = new Headers(response.headers);
+    applySecurityHeaders(headers, env, url);
+    return new Response(response.body, {
+      status: response.status,
+      statusText: response.statusText,
+      headers,
+    });
   },
 };
