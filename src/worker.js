@@ -158,12 +158,30 @@ function publicLeadTimes(env) {
   };
 }
 
+/**
+ * Keep or drop <!--@name-->…<!--/@name--> blocks in served HTML.
+ * @checkout / @nocheckout follow CHECKOUT_ENABLED; @sandbox is kept only when
+ * checkout is on against the Square sandbox.
+ */
+export function htmlBlocks(html, env) {
+  const on = checkoutEnabled(env);
+  const sandbox = (env?.SQUARE_ENVIRONMENT || "sandbox") !== "production";
+  const keep = { checkout: on, nocheckout: !on, sandbox: on && sandbox };
+  const re = /<!--@(checkout|nocheckout|sandbox)-->([\s\S]*?)<!--\/@\1-->/g;
+  // Blocks can nest (the sandbox card hint sits inside the checkout modal).
+  for (let prev = null; prev !== html; ) {
+    prev = html;
+    html = html.replace(re, (_, name, inner) => (keep[name] ? inner : ""));
+  }
+  return html;
+}
+
 function htmlTokens(html, env, request) {
   const origin = String(env.SITE_ORIGIN || new URL(request.url).origin).replace(/\/$/, "");
   const phrase = flatRateShippingPhrase(shippingCents(env));
   const effective = String(env.POLICY_EFFECTIVE_DATE || "October 10, 2026").trim();
   const email = notifyEmail(env);
-  return html
+  return htmlBlocks(html, env)
     .replaceAll("__SITE_ORIGIN__", origin)
     .replaceAll("__SHIPPING_PHRASE__", phrase)
     .replaceAll("__LEAD_TIME_POLICY__", publicLeadTimes(env).policy)
@@ -558,7 +576,7 @@ async function handleCatalog(env) {
   const mto = await getMtoState(env);
   const products = mapCatalogToProducts(objects, inventoryMap, env, mto);
   const filter = catalogFilterFromEnv(env);
-  const sections = productSections(products, filter.shop);
+  const sections = productSections(products, filter.groups);
 
   return json(
     {
