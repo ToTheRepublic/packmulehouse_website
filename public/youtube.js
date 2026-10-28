@@ -16,8 +16,42 @@
     } catch (e2) { /* ignore */ }
   }
 
+  var WATCH_URL = "https://www.youtube.com/watch?v=" + VIDEO_ID;
+  var fellBack = false;
+  var readyTimer = null;
+
+  // If YouTube can't play the video (onError, or the player never gets
+  // ready), show the thumbnail as a link to the video on YouTube instead of
+  // an error box or an endless spinner.
+  function showFallback() {
+    if (fellBack) return;
+    fellBack = true;
+    clearTimeout(readyTimer);
+    var mount = document.getElementById("yt-player") ||
+      document.querySelector(".video-wrapper iframe");
+    if (!mount) return;
+    var link = document.createElement("a");
+    link.className = "video-fallback";
+    link.href = WATCH_URL;
+    link.target = "_blank";
+    link.rel = "noopener";
+    link.setAttribute("aria-label", "Watch the X-Frame Drop-In System video on YouTube");
+    var img = document.createElement("img");
+    img.src = "https://i.ytimg.com/vi/" + VIDEO_ID + "/hqdefault.jpg";
+    img.alt = "";
+    img.loading = "lazy";
+    var label = document.createElement("span");
+    label.className = "video-fallback-label";
+    label.textContent = "▶ Watch on YouTube";
+    link.append(img, label);
+    mount.replaceWith(link);
+    try { if (player && player.destroy) player.destroy(); } catch (e) { /* ignore */ }
+  }
+
   window.onYouTubeIframeAPIReady = function () {
+    readyTimer = setTimeout(showFallback, 15000);
     player = new YT.Player("yt-player", {
+      host: "https://www.youtube-nocookie.com",
       videoId: VIDEO_ID,
       playerVars: {
         autoplay: 1,
@@ -33,7 +67,11 @@
         fs: 1,
       },
       events: {
+        onError: function () {
+          showFallback();
+        },
         onReady: function () {
+          clearTimeout(readyTimer);
           forceCaptionsOff();
           try {
             player.mute();
@@ -57,6 +95,7 @@
     tag.id = "yt-iframe-api";
     tag.src = "https://www.youtube.com/iframe_api";
     tag.async = true;
+    tag.onerror = showFallback;
     document.head.appendChild(tag);
   }
 })();

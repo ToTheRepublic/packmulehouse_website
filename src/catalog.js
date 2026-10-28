@@ -34,12 +34,34 @@ function splitIds(value) {
     .filter(Boolean);
 }
 
-/** Ordered shop categories. Commas separate entries so names can contain spaces. */
-export function shopCategoryLabels(env) {
+/**
+ * Ordered shop sections. Commas separate entries so names can contain spaces.
+ * An entry is a Square category name or id ("X-Frame"), or a section label
+ * followed by "=" and one or more categories separated by "|"
+ * ("X-Frames = X-Frame | X-Frame Add-Ons").
+ */
+export function shopCategoryGroups(env) {
   return String(env?.SHOP_CATEGORIES || "")
     .split(",")
     .map((s) => s.trim())
-    .filter(Boolean);
+    .filter(Boolean)
+    .map((entry) => {
+      const eq = entry.indexOf("=");
+      if (eq < 0) return { name: entry, keys: [entry] };
+      const name = entry.slice(0, eq).trim();
+      const keys = entry
+        .slice(eq + 1)
+        .split("|")
+        .map((k) => k.trim())
+        .filter(Boolean);
+      return { name: name || keys[0] || "", keys: keys.length ? keys : [name] };
+    })
+    .filter((g) => g.name);
+}
+
+/** Section labels, in shop order. */
+export function shopCategoryLabels(env) {
+  return shopCategoryGroups(env).map((g) => g.name);
 }
 
 /**
@@ -49,13 +71,15 @@ export function shopCategoryLabels(env) {
 export function catalogFilterFromEnv(env) {
   const ids = splitIds(env?.SQUARE_ITEM_IDS);
   const cats = splitIds(env?.SQUARE_CATEGORY_ID);
-  const shop = shopCategoryLabels(env);
+  const groups = shopCategoryGroups(env);
+  const shop = groups.map((g) => g.name);
   return {
     active: ids.length > 0 || cats.length > 0 || shop.length > 0,
     ids: new Set(ids),
     cats: new Set(cats),
     shop,
-    shopKeys: new Set(shop.map((s) => s.toLowerCase())),
+    groups,
+    shopKeys: new Set(groups.flatMap((g) => g.keys).map((s) => s.toLowerCase())),
   };
 }
 
@@ -108,15 +132,16 @@ export function itemAllowed(itemObj, filter, namesById) {
 export function productSections(products, shopLabels) {
   if (!shopLabels?.length) return null;
   const sections = [];
-  for (const label of shopLabels) {
-    const key = label.toLowerCase();
+  for (const entry of shopLabels) {
+    const group = typeof entry === "string" ? { name: entry, keys: [entry] } : entry;
+    const wanted = group.keys.map((k) => String(k).trim().toLowerCase());
     const matched = (products || []).filter((p) => {
       const keys = [...(p.categoryIds || []), ...(p.categoryNames || [])]
         .map((s) => String(s || "").trim().toLowerCase())
         .filter(Boolean);
-      return keys.includes(key);
+      return keys.some((k) => wanted.includes(k));
     });
-    if (matched.length) sections.push({ name: label, products: matched });
+    if (matched.length) sections.push({ name: group.name, products: matched });
   }
   return sections;
 }

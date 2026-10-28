@@ -66,7 +66,8 @@
     "SITE_ORIGIN": "https://packmulehouse.com",
     // Resend From address. Sandbox can use Resend's onboarding sender; production needs a verified domain.
     "EMAIL_FROM": "Pack Mule House <onboarding@resend.dev>",
-    // Shop sections, in order. Each entry is a Square category name or id.
+    // Shop sections, in order. Each entry is a Square category name or id, or
+    // "Section label = Category A | Category B" to group several categories.
     // Names match case-insensitively. Leave unset to list the whole catalog.
     // Assign items to these categories in the Square dashboard; new items show up
     // on the next catalog load. Empty categories are omitted.
@@ -84,6 +85,76 @@
   //   SQUARE_ACCESS_TOKEN, ADMIN_PASSWORD, ADMIN_SESSION_SECRET, NTFY_TOPIC
   // Optional secrets: NTFY_TOKEN, DISCORD_WEBHOOK_URL, RESEND_API_KEY,
   //   TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID
+  // Staging / QC preview: its own Worker (packmulehouse-website-staging), its
+  // own KV and Durable Object, production Square catalog, checkout off.
+  // Deploy: npx wrangler deploy --env staging
+  // Secrets are per Worker: wrangler secret put SQUARE_ACCESS_TOKEN --env staging
+  "env": {
+    "staging": {
+      "name": "packmulehouse-website-staging",
+      "workers_dev": true,
+      "kv_namespaces": [
+        { "binding": "MTO_STATE", "id": "e55d6b1c45804a40a3004fea0e5fa656" }
+      ],
+      "durable_objects": {
+        "bindings": [{ "name": "MTO_COUNTER", "class_name": "MtoCounter" }]
+      },
+      "migrations": [{ "tag": "v1-mto-counter", "new_sqlite_classes": ["MtoCounter"] }],
+      "vars": {
+        // Production application id (sq0idp-…) from the Square Developer Console.
+        // Only the payment form needs it, and checkout is off here.
+        "SQUARE_APPLICATION_ID": "",
+        "SQUARE_LOCATION_ID": "LB5Y7PT3GZE96",
+        "SQUARE_ENVIRONMENT": "production",
+        "SHIPPING_CENTS": "1000",
+        // Online checkout. "false" shows products and prices with an "ordering opens
+        // soon" note, hides the cart, and makes /api/pay and /api/quote refuse.
+        "CHECKOUT_ENABLED": "false",
+        // Made-to-order lead times in weeks. Keys are Square category ids or names
+        // (or a substring of the item name). Default is 1 week.
+        "LEAD_TIME_WEEKS_DEFAULT": "1",
+        "LEAD_TIME_WEEKS": "X-Frame:1, Wind River Canyon:2",
+        // Shown on the policy pages. Change this when you revise the policies.
+        "POLICY_EFFECTIVE_DATE": "October 10, 2026",
+        // Apple Pay domain file from the Square Developer Console. Sandbox and
+        // production files differ. Leave empty until you download one. The site
+        // serves it at /.well-known/apple-developer-merchantid-domain-association.
+        // "APPLE_PAY_DOMAIN_ASSOCIATION_SANDBOX": "",
+        // "APPLE_PAY_DOMAIN_ASSOCIATION_PRODUCTION": "",
+        // Shelf prices already include tax, matching in-person market pricing.
+        // No separate tax is added to quotes, the cart, or the Square order.
+        // Set TAX_MODE to "added" to charge TAX_PERCENT on top of merchandise
+        // (and shipping when TAX_APPLIES_TO_SHIPPING is true). Not a jurisdiction lookup.
+        "TAX_MODE": "included",
+        "TAX_PERCENT": "6",
+        "TAX_NAME": "Sales Tax",
+        // Used only when TAX_MODE is "added". "false" taxes merchandise only.
+        "TAX_APPLIES_TO_SHIPPING": "true",
+        // Discounts come from Square Catalog pricing rules (same as POS).
+        // Site uses pricing_options.auto_apply_discounts — manage in Square Dashboard.
+        "MERCHANT_NOTIFY_EMAIL": "packmulehouse@gmail.com",
+        "NTFY_SERVER": "https://ntfy.sh",
+        // Public site origin (canonical links, FormSubmit). Change this at go-live.
+        "SITE_ORIGIN": "https://packmulehouse-website-staging.philip-michael-howard.workers.dev",
+        // Resend From address. Sandbox can use Resend's onboarding sender; production needs a verified domain.
+        "EMAIL_FROM": "Pack Mule House <onboarding@resend.dev>",
+        // Shop sections, in order. Each entry is a Square category name or id, or
+    // "Section label = Category A | Category B" to group several categories.
+        // Names match case-insensitively. Leave unset to list the whole catalog.
+        // Assign items to these categories in the Square dashboard; new items show up
+        // on the next catalog load. Empty categories are omitted.
+        "SHOP_CATEGORIES": "X-Frames = X-Frame | X-Frame Add-Ons, Wind River Canyon Models, Wind River Canyon Keychain",
+        // Optional extra allowlists. Ids only. Leave unset unless you need them.
+        // "SQUARE_CATEGORY_ID": "",
+        // "SQUARE_ITEM_IDS": "",
+        // FOMO: only show stock when below this
+        "LOW_STOCK_THRESHOLD": "10",
+        // Made-to-order capacity (you re-enable via admin when drained)
+        "MTO_MAX": "50",
+        "MTO_PROMISE": "Ships within 1 week (all items together)"
+      }
+    }
+  },
   "observability": {
     "enabled": true
   }

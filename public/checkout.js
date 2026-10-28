@@ -36,6 +36,8 @@
   const confirmMto = document.getElementById("confirm-mto");
   const confirmReceipt = document.getElementById("confirm-receipt");
   const announcer = document.getElementById("cart-announcer");
+  // The server leaves the cart and checkout markup out when checkout is off.
+  const shopOnly = !modal;
   const US_STATES = new Set(
     "AL AK AZ AR CA CO CT DE DC FL GA HI ID IL IN IA KS KY LA ME MD MA MI MN MS MO MT NE NV NH NJ NM NY NC ND OH OK OR PA RI SC SD TN TX UT VT VA WA WV WI WY PR VI GU AS MP".split(
       " "
@@ -356,6 +358,7 @@
   }
 
   function updateCartBadge() {
+    if (!cartBadge) return;
     const n = cartCount();
     cartBadge.textContent = String(n);
     cartBadge.dataset.count = String(n);
@@ -1632,12 +1635,11 @@
       if (config.discounts) discountInfo = { ...discountInfo, ...config.discounts };
       if (config.mto) mtoInfo = { ...mtoInfo, ...config.mto };
 
-      const checkoutOn = config.checkoutEnabled !== false;
+      const checkoutOn = config.checkoutEnabled !== false && !shopOnly;
+      if (!checkoutOn) config.checkoutEnabled = false;
       if (!checkoutOn) {
         const cartBtn = document.getElementById("cart-open");
         if (cartBtn) cartBtn.hidden = true;
-        const promise = document.getElementById("checkout-promise");
-        if (promise) promise.textContent = config.checkoutOffMessage || CHECKOUT_OFF_FALLBACK;
       }
 
       if (checkoutOn && config.environment !== "production" && envBadge) {
@@ -1672,84 +1674,86 @@
     }
   }
 
-  document.getElementById("gift-card-pay")?.addEventListener("click", async () => {
-    if (!wallets.giftCard || payInFlight) return;
-    const shippingError = validateShipping(readShipping());
-    if (shippingError) {
-      setStatus(shippingError, "error");
-      document.getElementById("ship-name")?.focus();
-      return;
-    }
-    setPayBusy(true);
-    try {
-      setStatus("Reading gift card…");
-      const token = tokenFromResult(
-        await wallets.giftCard.tokenize(),
-        "Gift card could not be read."
-      );
-      await payWithSource(token, "giftcard", { continueBusy: true });
-    } catch (e) {
-      console.error(e);
-      setStatus(e.message || "Gift card payment could not be completed.", "error");
-      setPayBusy(false);
-    }
-  });
-
-  document.getElementById("cart-open").addEventListener("click", () => openModal("cart"));
-  document.getElementById("checkout-close").addEventListener("click", closeModal);
-  document.getElementById("cart-continue-btn").addEventListener("click", closeModal);
-  document.getElementById("pay-back-btn").addEventListener("click", showCartStep);
-  document.getElementById("confirm-done").addEventListener("click", closeModal);
-  cartCheckoutBtn.addEventListener("click", () => {
-    if (!cart.length) return;
-    showPayStep();
-  });
-  form.addEventListener("submit", onSubmit);
-  for (const id of [
-    "ship-name",
-    "ship-email",
-    "ship-phone",
-    "ship-line1",
-    "ship-line2",
-    "ship-city",
-    "ship-state",
-    "ship-postal",
-  ]) {
-    document.getElementById(id)?.addEventListener("input", () => {
-      if (payStatus.classList.contains("error")) setStatus("");
+  if (!shopOnly) {
+    document.getElementById("gift-card-pay")?.addEventListener("click", async () => {
+      if (!wallets.giftCard || payInFlight) return;
+      const shippingError = validateShipping(readShipping());
+      if (shippingError) {
+        setStatus(shippingError, "error");
+        document.getElementById("ship-name")?.focus();
+        return;
+      }
+      setPayBusy(true);
+      try {
+        setStatus("Reading gift card…");
+        const token = tokenFromResult(
+          await wallets.giftCard.tokenize(),
+          "Gift card could not be read."
+        );
+        await payWithSource(token, "giftcard", { continueBusy: true });
+      } catch (e) {
+        console.error(e);
+        setStatus(e.message || "Gift card payment could not be completed.", "error");
+        setPayBusy(false);
+      }
     });
-  }
 
-  // Don't close on outside click — too easy to lose checkout progress.
-  // Escape: step back from payment → cart; only close fully from the cart view.
-  document.addEventListener("keydown", (e) => {
-    if (!modal.classList.contains("open")) return;
-    if (e.key === "Escape") {
-      if (panelConfirm && !panelConfirm.hidden) {
+    document.getElementById("cart-open").addEventListener("click", () => openModal("cart"));
+    document.getElementById("checkout-close").addEventListener("click", closeModal);
+    document.getElementById("cart-continue-btn").addEventListener("click", closeModal);
+    document.getElementById("pay-back-btn").addEventListener("click", showCartStep);
+    document.getElementById("confirm-done").addEventListener("click", closeModal);
+    cartCheckoutBtn.addEventListener("click", () => {
+      if (!cart.length) return;
+      showPayStep();
+    });
+    form.addEventListener("submit", onSubmit);
+    for (const id of [
+      "ship-name",
+      "ship-email",
+      "ship-phone",
+      "ship-line1",
+      "ship-line2",
+      "ship-city",
+      "ship-state",
+      "ship-postal",
+    ]) {
+      document.getElementById(id)?.addEventListener("input", () => {
+        if (payStatus.classList.contains("error")) setStatus("");
+      });
+    }
+
+    // Don't close on outside click — too easy to lose checkout progress.
+    // Escape: step back from payment → cart; only close fully from the cart view.
+    document.addEventListener("keydown", (e) => {
+      if (!modal.classList.contains("open")) return;
+      if (e.key === "Escape") {
+        if (panelConfirm && !panelConfirm.hidden) {
+          closeModal();
+          return;
+        }
+        if (panelPay && !panelPay.hidden) {
+          if (payInFlight) return;
+          showCartStep();
+          return;
+        }
         closeModal();
         return;
       }
-      if (panelPay && !panelPay.hidden) {
-        if (payInFlight) return;
-        showCartStep();
-        return;
+      if (e.key !== "Tab") return;
+      const nodes = focusableIn(modal);
+      if (!nodes.length) return;
+      const first = nodes[0];
+      const last = nodes[nodes.length - 1];
+      if (e.shiftKey && document.activeElement === first) {
+        e.preventDefault();
+        last.focus();
+      } else if (!e.shiftKey && document.activeElement === last) {
+        e.preventDefault();
+        first.focus();
       }
-      closeModal();
-      return;
-    }
-    if (e.key !== "Tab") return;
-    const nodes = focusableIn(modal);
-    if (!nodes.length) return;
-    const first = nodes[0];
-    const last = nodes[nodes.length - 1];
-    if (e.shiftKey && document.activeElement === first) {
-      e.preventDefault();
-      last.focus();
-    } else if (!e.shiftKey && document.activeElement === last) {
-      e.preventDefault();
-      first.focus();
-    }
-  });
+    });
+  }
 
   if (document.readyState === "loading") {
     document.addEventListener("DOMContentLoaded", init);

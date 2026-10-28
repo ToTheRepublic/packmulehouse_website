@@ -157,6 +157,51 @@
       color: var(--text);
     }
 
+    .nav-toggle {
+      display: none;
+      align-items: center;
+      justify-content: center;
+      width: 44px;
+      height: 44px;
+      padding: 0;
+      border: 1px solid rgba(255, 255, 255, 0.14);
+      border-radius: 10px;
+      background: transparent;
+      color: var(--text);
+      cursor: pointer;
+    }
+
+    .nav-toggle:focus-visible {
+      outline: 2px solid var(--tan);
+      outline-offset: 2px;
+    }
+
+    .nav-toggle-bars,
+    .nav-toggle-bars::before,
+    .nav-toggle-bars::after {
+      display: block;
+      width: 20px;
+      height: 2px;
+      background: currentColor;
+      border-radius: 2px;
+      position: relative;
+      transition: transform 0.2s, opacity 0.2s;
+    }
+
+    .nav-toggle-bars::before,
+    .nav-toggle-bars::after {
+      content: "";
+      position: absolute;
+      left: 0;
+    }
+
+    .nav-toggle-bars::before { top: -6px; }
+    .nav-toggle-bars::after { top: 6px; }
+
+    .nav-toggle[aria-expanded="true"] .nav-toggle-bars { background: transparent; }
+    .nav-toggle[aria-expanded="true"] .nav-toggle-bars::before { transform: translateY(6px) rotate(45deg); }
+    .nav-toggle[aria-expanded="true"] .nav-toggle-bars::after { transform: translateY(-6px) rotate(-45deg); }
+
     .btn {
       display: inline-flex;
       align-items: center;
@@ -292,6 +337,38 @@
       border: 1px solid var(--border);
     }
 
+    .video-fallback {
+      position: absolute;
+      inset: 0;
+      display: block;
+      background: #000;
+    }
+
+    .video-fallback img {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      opacity: 0.8;
+    }
+
+    .video-fallback-label {
+      position: absolute;
+      left: 50%;
+      top: 50%;
+      transform: translate(-50%, -50%);
+      padding: 0.75rem 1.25rem;
+      border-radius: 999px;
+      background: rgba(0, 0, 0, 0.75);
+      color: #fff;
+      font-weight: 600;
+      white-space: nowrap;
+    }
+
+    .video-fallback:hover img,
+    .video-fallback:focus-visible img {
+      opacity: 1;
+    }
+
     .video-wrapper iframe,
     .video-wrapper #yt-player {
       position: absolute;
@@ -408,12 +485,18 @@
     }
 
     .checkout-off-note {
+      flex: 1 1 100%;
       margin: 0;
+      padding: 0.6rem 0.75rem;
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      border-radius: 10px;
+      background: rgba(255, 255, 255, 0.03);
       font-size: 0.85rem;
-      line-height: 1.35;
-      opacity: 0.85;
-      max-width: 22ch;
-      text-align: right;
+      line-height: 1.45;
+      color: var(--text-muted);
+      text-align: center;
+      text-wrap: balance;
+      overflow-wrap: anywhere;
     }
     .cart-btn[hidden],
     .sandbox-badge[hidden] { display: none; }
@@ -1099,8 +1182,37 @@
         grid-template-columns: 1fr;
       }
 
+      .nav-toggle {
+        display: inline-flex;
+      }
+
       .nav {
-        display: none; /* simple mobile for v1 – can expand later */
+        display: none;
+        position: absolute;
+        top: 100%;
+        left: 0;
+        right: 0;
+        flex-direction: column;
+        align-items: stretch;
+        gap: 0;
+        padding: 0.5rem 1rem 1rem;
+        background: var(--bg, #0b0b0b);
+        border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+        box-shadow: 0 12px 24px rgba(0, 0, 0, 0.35);
+      }
+
+      .nav.open {
+        display: flex;
+      }
+
+      .nav a {
+        padding: 0.85rem 0.25rem;
+        font-size: 1.05rem;
+        border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+      }
+
+      .nav a:last-child {
+        border-bottom: 0;
       }
     }
 
@@ -1129,15 +1241,20 @@
       </a>
 
       <div class="header-actions">
-        <nav class="nav">
+        <button type="button" class="nav-toggle" id="nav-toggle" aria-controls="site-nav" aria-expanded="false" aria-label="Open menu">
+          <span class="nav-toggle-bars" aria-hidden="true"></span>
+        </button>
+        <nav class="nav" id="site-nav" aria-label="Main">
           <a href="#products">Shop</a>
           <a href="#how-it-works">How it Works</a>
           <a href="#about">About</a>
         </nav>
+        <!--@checkout-->
         <button type="button" class="cart-btn" id="cart-open" aria-label="Open cart">
           Cart
           <span class="cart-badge" id="cart-badge" data-count="0">0</span>
         </button>
+        <!--/@checkout-->
       </div>
     </div>
   </header>
@@ -1184,7 +1301,7 @@
   <section class="products" id="products">
     <div class="products-header">
       <div>
-        <div class="section-label">The collection <span class="sandbox-badge" id="env-badge" hidden>Sandbox</span></div>
+        <div class="section-label">The collection <!--@sandbox--><span class="sandbox-badge" id="env-badge" hidden>Sandbox</span><!--/@sandbox--></div>
         <h2 id="products-heading">X-Frame Kits</h2>
         <p class="tax-note" id="prices-tax-note">Prices include tax</p>
         <p class="product-ship" id="shipping-note">$10 flat-rate shipping on US orders</p>
@@ -1227,7 +1344,7 @@
     <h2>Ready to upgrade your walls?</h2>
     <p>
       Pack Mule House is a small Wyoming-based maker shop. Every X-Frame kit is designed and produced with care.
-      <span id="checkout-promise">Checkout stays right here — secured by Square.</span>
+      <!--@checkout-->Checkout stays right here — secured by Square.<!--/@checkout--><!--@nocheckout-->Online ordering opens soon. Email <a href="mailto:__CONTACT_EMAIL__">__CONTACT_EMAIL__</a> to order.<!--/@nocheckout-->
     </p>
     <a href="#products" class="btn btn-primary">Shop X-Frame</a>
   </section>
@@ -1257,7 +1374,8 @@
     </div>
   </footer>
 
-  <!-- CART + CHECKOUT MODAL -->
+  <!-- CART + CHECKOUT MODAL (left out by the server when checkout is off) -->
+  <!--@checkout-->
   <div class="modal-overlay" id="checkout-modal" role="dialog" aria-modal="true" aria-labelledby="checkout-title" tabindex="-1" hidden>
     <div class="modal wide">
       <div class="modal-header">
@@ -1343,7 +1461,7 @@
           <div class="field">
             <label id="card-details-label" for="card-container">Card details</label>
             <div id="card-container" role="group" aria-labelledby="card-details-label"><!-- Square Web Payments card form --></div>
-            <p class="field-hint" id="sandbox-card-hint" hidden>Sandbox test card: 4111 1111 1111 1111 · any future exp · CVV 111 · ZIP 12345</p>
+            <!--@sandbox--><p class="field-hint" id="sandbox-card-hint" hidden>Sandbox test card: 4111 1111 1111 1111 · any future exp · CVV 111 · ZIP 12345</p><!--/@sandbox-->
           </div>
 
           <p class="pay-divider" id="pay-divider" hidden>or</p>
@@ -1376,7 +1494,7 @@
           <p id="confirm-order" class="confirm-order"></p>
           <p id="confirm-mto" class="field-hint" hidden></p>
         </div>
-        <p><a id="confirm-receipt" href="" target="_blank" rel="noopener">View Square receipt</a></p>
+        <p><a id="confirm-receipt" target="_blank" rel="noopener" hidden>View Square receipt</a></p>
         <p id="confirm-receipt-note" class="field-hint" hidden></p>
         <div class="modal-actions">
           <button type="button" class="btn btn-primary" id="confirm-done">Done</button>
@@ -1385,10 +1503,13 @@
     </div>
   </div>
 
+  <!--/@checkout-->
+
   <div class="cart-toast" id="cart-toast" role="status" aria-live="polite"></div>
   <div id="cart-announcer" class="sr-only" aria-live="polite"></div>
 
   <script src="/checkout.js?v=19" defer></script>
+  <script src="/nav.js" defer></script>
   <script src="/youtube.js" defer></script>
 </body>
 </html>

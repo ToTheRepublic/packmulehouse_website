@@ -149,6 +149,30 @@ test("shop categories match names case-insensitively and ids, in order", () => {
   assert.equal(productSections(products, []), null);
 });
 
+test("a shop section can group several Square categories", () => {
+  const env = {
+    SHOP_CATEGORIES:
+      "X-Frames = X-Frame | X-Frame Add-Ons, Wind River Canyon Models, Wind River Canyon Keychain",
+  };
+  const filter = catalogFilterFromEnv(env);
+  assert.deepEqual(filter.shop, ["X-Frames", "Wind River Canyon Models", "Wind River Canyon Keychain"]);
+  const names = new Map([["A", "X-Frame Add-Ons"], ["C", "Cups"]]);
+  assert.equal(itemAllowed({ id: "1", item_data: { categories: [{ id: "A" }] } }, filter, names), true);
+  assert.equal(itemAllowed({ id: "2", item_data: { categories: [{ id: "C" }] } }, filter, names), false);
+  const sections = productSections(
+    [
+      { id: "k", categoryNames: ["X-Frame"] },
+      { id: "a", categoryNames: ["X-Frame Add-Ons"] },
+      { id: "w", categoryNames: ["Wind River Canyon Keychain"] },
+    ],
+    filter.groups
+  );
+  assert.deepEqual(sections.map((s) => [s.name, s.products.map((p) => p.id)]), [
+    ["X-Frames", ["k", "a"]],
+    ["Wind River Canyon Keychain", ["w"]],
+  ]);
+});
+
 test("location presence rejects absent and allowlisted locations", () => {
   assert.equal(presentAtLocation({ present_at_all_locations: true }, "L"), true);
   assert.equal(
