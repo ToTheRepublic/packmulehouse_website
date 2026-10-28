@@ -12,6 +12,7 @@ import {
   itemAllowed,
   itemCategoryIds,
   productSections,
+  withoutStockSignals,
   presentAtLocation,
   publicMto,
   variationTracksInventory,
@@ -574,7 +575,9 @@ async function handleCatalog(env) {
   }
 
   const mto = await getMtoState(env);
-  const products = mapCatalogToProducts(objects, inventoryMap, env, mto);
+  const mapped = mapCatalogToProducts(objects, inventoryMap, env, mto);
+  // No stock counts on the storefront until checkout is on.
+  const products = checkoutEnabled(env) ? mapped : withoutStockSignals(mapped);
   const filter = catalogFilterFromEnv(env);
   const sections = productSections(products, filter.groups);
 
