@@ -458,7 +458,9 @@
         const tail = document.createElement("span");
         tail.className = "note-email";
         tail.append(a, text.slice(m.index + m[0].length));
-        line.append(text.slice(0, m.index), tail);
+        // Non-breaking spaces keep "Message us at" together too.
+        const lead = text.slice(0, m.index).trim().replace(/ /g, "\u00a0");
+        line.append(lead ? `${lead} ` : "", tail);
       } else {
         line.textContent = text;
       }
