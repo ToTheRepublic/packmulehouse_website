@@ -454,7 +454,11 @@
         const a = document.createElement("a");
         a.href = `mailto:${m[0]}`;
         a.textContent = m[0];
-        line.append(text.slice(0, m.index), a, text.slice(m.index + m[0].length));
+        // Email and the words after it wrap as one unit.
+        const tail = document.createElement("span");
+        tail.className = "note-email";
+        tail.append(a, text.slice(m.index + m[0].length));
+        line.append(text.slice(0, m.index), tail);
       } else {
         line.textContent = text;
       }
