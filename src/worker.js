@@ -511,6 +511,14 @@ function mapCatalogToProducts(objects, inventoryMap, env, mto) {
   return products;
 }
 
+export const CHECKOUT_OFF_MESSAGE =
+  "Online ordering opens soon. Message us at packmulehouse@gmail.com to order.";
+
+/** Online checkout is on only when CHECKOUT_ENABLED is "true". */
+export function checkoutEnabled(env) {
+  return String(env?.CHECKOUT_ENABLED ?? "false").trim().toLowerCase() === "true";
+}
+
 async function handleConfig(env) {
   const ship = shippingCents(env);
   const mto = await getMtoState(env);
@@ -529,6 +537,8 @@ async function handleConfig(env) {
     discounts,
     lowStockThreshold: lowStockThreshold(env),
     mto: publicMto(mto),
+    checkoutEnabled: checkoutEnabled(env),
+    checkoutOffMessage: CHECKOUT_OFF_MESSAGE,
   });
 }
 
@@ -1659,6 +1669,12 @@ async function route(request, env, url) {
   }
   if (url.pathname === "/api/catalog") {
     return handleCatalog(env);
+  }
+  if (
+    (url.pathname === "/api/pay" || url.pathname === "/api/quote") &&
+    !checkoutEnabled(env)
+  ) {
+    return error(CHECKOUT_OFF_MESSAGE, 503);
   }
   if (url.pathname === "/api/pay") {
     return handlePay(request, env);

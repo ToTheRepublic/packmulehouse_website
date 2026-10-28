@@ -44,6 +44,8 @@
   const ZIP_RE = /^\d{5}(-\d{4})?$/;
 
   let config = null;
+  const CHECKOUT_OFF_FALLBACK =
+    "Online ordering opens soon. Message us at packmulehouse@gmail.com to order.";
   let shippingCents = 1000;
   let shippingPhrase = "$10 flat-rate shipping";
   let taxInfo = {
@@ -726,7 +728,14 @@
       btn.disabled = unavailable;
       btn.addEventListener("click", () => addToCart(p, pickQty));
 
-      actions.append(qty, btn);
+      if (config && config.checkoutEnabled === false) {
+        const note = document.createElement("p");
+        note.className = "checkout-off-note";
+        note.textContent = config.checkoutOffMessage || CHECKOUT_OFF_FALLBACK;
+        actions.append(note);
+      } else {
+        actions.append(qty, btn);
+      }
       footer.append(price, actions);
       body.append(h3, desc, footer);
 
@@ -1623,11 +1632,17 @@
       if (config.discounts) discountInfo = { ...discountInfo, ...config.discounts };
       if (config.mto) mtoInfo = { ...mtoInfo, ...config.mto };
 
-      if (config.environment !== "production" && envBadge) {
+      const checkoutOn = config.checkoutEnabled !== false;
+      if (!checkoutOn) {
+        const cartBtn = document.getElementById("cart-open");
+        if (cartBtn) cartBtn.hidden = true;
+      }
+
+      if (checkoutOn && config.environment !== "production" && envBadge) {
         envBadge.hidden = false;
       }
 
-      await loadSquareSdk(config.environment);
+      if (checkoutOn) await loadSquareSdk(config.environment);
 
       if (!catalogRes.ok) {
         const err = await catalogRes.json().catch(() => ({}));

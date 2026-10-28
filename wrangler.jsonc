@@ -35,6 +35,9 @@
     "SQUARE_LOCATION_ID": "LKJ4C91RD6JQH",
     "SQUARE_ENVIRONMENT": "sandbox",
     "SHIPPING_CENTS": "1000",
+    // Online checkout. "false" shows products and prices with an "ordering opens
+    // soon" note, hides the cart, and makes /api/pay and /api/quote refuse.
+    "CHECKOUT_ENABLED": "false",
     // Made-to-order lead times in weeks. Keys are Square category ids or names
     // (or a substring of the item name). Default is 1 week.
     "LEAD_TIME_WEEKS_DEFAULT": "1",
@@ -60,7 +63,7 @@
     "MERCHANT_NOTIFY_EMAIL": "packmulehouse@gmail.com",
     "NTFY_SERVER": "https://ntfy.sh",
     // Public site origin (canonical links, FormSubmit). Change this at go-live.
-    "SITE_ORIGIN": "https://packmulehouse-website.philip-michael-howard.workers.dev",
+    "SITE_ORIGIN": "https://packmulehouse.com",
     // Resend From address. Sandbox can use Resend's onboarding sender; production needs a verified domain.
     "EMAIL_FROM": "Pack Mule House <onboarding@resend.dev>",
     // Shop sections, in order. Each entry is a Square category name or id.

@@ -12,7 +12,9 @@
  */
 
 export function shouldNoindex(env, hostname) {
-  if ((env?.SQUARE_ENVIRONMENT || "sandbox") !== "production") return true;
+  // Sandbox payments are not for the public, unless checkout is switched off.
+  const checkoutOn = String(env?.CHECKOUT_ENABLED ?? "false").trim().toLowerCase() === "true";
+  if (checkoutOn && (env?.SQUARE_ENVIRONMENT || "sandbox") !== "production") return true;
   const host = hostname || "";
   return host === "localhost" || host === "127.0.0.1" || host.endsWith(".workers.dev");
 }
