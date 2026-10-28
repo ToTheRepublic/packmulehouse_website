@@ -433,6 +433,25 @@
     return 20;
   }
 
+  /**
+   * When an item's variations (sizes, styles) have different prices, return
+   * the lowest one so the card can say "Starting at $22.00". Null when every
+   * variation costs the same.
+   */
+  function priceRange(product) {
+    const amounts = (product.variations || [])
+      .map((v) => Number(v.amount))
+      .filter((n) => Number.isFinite(n) && n > 0);
+    if (new Set(amounts).size < 2) return null;
+    const min = Math.min(...amounts);
+    const cheapest = product.variations.find((v) => Number(v.amount) === min);
+    const currency = cheapest?.currency || "USD";
+    const label =
+      cheapest?.priceLabel ||
+      new Intl.NumberFormat("en-US", { style: "currency", currency }).format(min / 100);
+    return { min, label };
+  }
+
   function addToCart(product, quantity) {
     const variation =
       product.variations.find((v) => v.id === product.defaultVariationId) ||
@@ -671,7 +690,15 @@
 
       const price = document.createElement("div");
       price.className = "product-price";
-      price.textContent = p.priceLabel;
+      const range = priceRange(p);
+      if (range) {
+        const from = document.createElement("span");
+        from.className = "price-from";
+        from.textContent = "Starting at";
+        price.append(from, range.label);
+      } else {
+        price.textContent = p.priceLabel;
+      }
       if (pricesIncludeTax()) {
         const note = document.createElement("span");
         note.className = "tax-note";
