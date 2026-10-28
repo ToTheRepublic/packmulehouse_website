@@ -438,6 +438,28 @@
    * the lowest one so the card can say "Starting at $22.00". Null when every
    * variation costs the same.
    */
+  /**
+   * One sentence per line, and the email as a mailto link that never breaks,
+   * so the notice wraps cleanly on narrow cards.
+   */
+  function fillCheckoutOffNote(el, message) {
+    const sentences = String(message).match(/[^.!?]+[.!?]*(?:\s+|$)/g) || [message];
+    for (const sentence of sentences) {
+      const line = document.createElement("span");
+      const text = sentence.trim();
+      const m = text.match(/[\w.+-]+@[\w-]+(?:\.[\w-]+)+/);
+      if (m) {
+        const a = document.createElement("a");
+        a.href = `mailto:${m[0]}`;
+        a.textContent = m[0];
+        line.append(text.slice(0, m.index), a, text.slice(m.index + m[0].length));
+      } else {
+        line.textContent = text;
+      }
+      el.appendChild(line);
+    }
+  }
+
   function priceRange(product) {
     const amounts = (product.variations || [])
       .map((v) => Number(v.amount))
@@ -761,7 +783,7 @@
       if (config && config.checkoutEnabled === false) {
         const note = document.createElement("p");
         note.className = "checkout-off-note";
-        note.textContent = config.checkoutOffMessage || CHECKOUT_OFF_FALLBACK;
+        fillCheckoutOffNote(note, config.checkoutOffMessage || CHECKOUT_OFF_FALLBACK);
         actions.append(note);
       } else {
         actions.append(qty, btn);

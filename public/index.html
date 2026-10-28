@@ -406,10 +406,10 @@
       gap: 1.5rem;
     }
 
-    /* Short sections on wide screens: one item becomes a horizontal feature
+    /* Short sections on tablets and up: one item becomes a horizontal feature
        card (photo left, details right); two items share the row as two
-       larger cards. Phones and 3+ items keep the normal grid. */
-    @media (min-width: 900px) {
+       larger cards. Phones (<600px) and 3+ items keep the normal grid. */
+    @media (min-width: 600px) {
       .product-section:has(.product-card:only-child) h2,
       .product-grid:has(> .product-card:only-child) {
         max-width: 980px;
@@ -468,6 +468,33 @@
         grid-template-columns: repeat(2, minmax(0, 1fr));
         gap: 2rem;
       }
+    }
+
+    @media (min-width: 600px) and (max-width: 899px) {
+      .product-card:only-child .product-body {
+        padding: 1.5rem 1.6rem;
+      }
+
+      .product-card:only-child .product-body h3 {
+        font-size: 1.3rem;
+      }
+
+      .product-card:only-child .product-body p {
+        font-size: 0.92rem;
+        margin-bottom: 1rem;
+      }
+    }
+
+    .checkout-off-note span {
+      display: block;
+    }
+
+    .checkout-off-note a {
+      color: inherit;
+      white-space: nowrap;
+      text-decoration: underline;
+      text-decoration-color: rgba(255, 255, 255, 0.25);
+      text-underline-offset: 2px;
     }
 
     .product-section + .product-section {
@@ -570,7 +597,6 @@
       color: var(--text-muted);
       text-align: center;
       text-wrap: balance;
-      overflow-wrap: anywhere;
     }
     .cart-btn[hidden],
     .sandbox-badge[hidden] { display: none; }
