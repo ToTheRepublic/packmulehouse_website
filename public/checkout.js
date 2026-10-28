@@ -1636,6 +1636,8 @@
       if (!checkoutOn) {
         const cartBtn = document.getElementById("cart-open");
         if (cartBtn) cartBtn.hidden = true;
+        const promise = document.getElementById("checkout-promise");
+        if (promise) promise.textContent = config.checkoutOffMessage || CHECKOUT_OFF_FALLBACK;
       }
 
       if (checkoutOn && config.environment !== "production" && envBadge) {

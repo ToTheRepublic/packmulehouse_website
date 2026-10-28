@@ -415,7 +415,8 @@
       max-width: 22ch;
       text-align: right;
     }
-    .cart-btn[hidden] { display: none; }
+    .cart-btn[hidden],
+    .sandbox-badge[hidden] { display: none; }
     .product-actions {
       display: flex;
       align-items: center;
@@ -1226,7 +1227,7 @@
     <h2>Ready to upgrade your walls?</h2>
     <p>
       Pack Mule House is a small Wyoming-based maker shop. Every X-Frame kit is designed and produced with care.
-      Checkout stays right here — secured by Square.
+      <span id="checkout-promise">Checkout stays right here — secured by Square.</span>
     </p>
     <a href="#products" class="btn btn-primary">Shop X-Frame</a>
   </section>
