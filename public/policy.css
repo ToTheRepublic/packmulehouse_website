@@ -60,3 +60,8 @@ ul { padding-left: 1.2rem; }
 }
 .links a { color: var(--text-muted); text-decoration: none; }
 .links a:hover, .links a[aria-current="page"] { color: var(--tan); }
+.footer-note { margin: 1rem 0 0; font-size: 0.75rem; }
+.footer-note a { color: var(--text-dim); text-decoration: none; }
+.footer-note a:hover { color: var(--text-muted); text-decoration: underline; }
+.quote-embed { width: 100%; margin-top: 1.5rem; }
+.quote-embed iframe { width: 100%; border: 0; display: block; }
