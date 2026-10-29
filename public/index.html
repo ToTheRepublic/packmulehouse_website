@@ -1202,6 +1202,19 @@
     }
 
     /* ========== FOOTER ========== */
+    .quote-link {
+      text-align: center;
+      margin: 2rem 0 0;
+      font-size: 0.95rem;
+    }
+    .quote-link a { color: var(--tan, #c4a574); text-decoration: underline; text-underline-offset: 3px; }
+    .footer-note {
+      text-align: center;
+      margin: 1.25rem auto 0;
+      font-size: 0.75rem;
+    }
+    .footer-note a { color: var(--text-dim, #6b675f); text-decoration: none; }
+    .footer-note a:hover { color: var(--text-muted, #9a958a); text-decoration: underline; }
     .footer {
       border-top: 1px solid var(--border);
       padding: 2.5rem 1.5rem;
@@ -1392,6 +1405,7 @@
           <a href="#products">Shop</a>
           <a href="#how-it-works">How it Works</a>
           <a href="#about">About</a>
+          <a href="/quote">Instant Quote</a>
         </nav>
         <!--@checkout-->
         <button type="button" class="cart-btn" id="cart-open" aria-label="Open cart">
@@ -1457,6 +1471,7 @@
         <div class="products-status">Loading products…</div>
       </div>
     </div>
+    <p class="quote-link"><a href="/quote">Have your own model? Get an instant quote</a></p>
   </section>
 
   <!-- BENEFITS / HOW IT WORKS -->
@@ -1512,10 +1527,12 @@
         <a href="/returns">Returns</a>
         <a href="/privacy">Privacy</a>
         <a href="/terms">Terms</a>
+        <a href="/quote">Instant Quote</a>
         <a href="/contact">Contact</a>
-        <a href="https://www.youtube.com/@PackMuleHouse" target="_blank" rel="noopener">YouTube</a>
+        <a href="https://www.com/@PackMuleHouse" target="_blank" rel="noopener">YouTube</a>
       </div>
     </div>
+    <p class="footer-note"><a href="https://sliceworth.com" target="_blank" rel="noopener">Run a print shop? Get instant quotes on your site</a></p>
   </footer>
 
   <!-- CART + CHECKOUT MODAL (left out by the server when checkout is off) -->
