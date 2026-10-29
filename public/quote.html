@@ -11,13 +11,32 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Space+Grotesk:wght@600&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="/policy.css" />
+  <link rel="stylesheet" href="/site-header.css" />
 </head>
 <body>
+  <header class="header">
+    <div class="header-inner">
+      <a href="/" class="logo-link">
+        <picture>
+          <source type="image/webp" srcset="logo-48.webp 1x, logo-96.webp 2x" />
+          <img src="logo-96.png" srcset="logo-48.png 1x, logo-96.png 2x" width="48" height="48" alt="Pack Mule House" class="logo-img" />
+        </picture>
+        <div class="logo-text">Pack Mule <span>House</span></div>
+      </a>
+      <div class="header-actions">
+        <button type="button" class="nav-toggle" id="nav-toggle" aria-controls="site-nav" aria-expanded="false" aria-label="Open menu">
+          <span class="nav-toggle-bars" aria-hidden="true"></span>
+        </button>
+        <nav class="nav" id="site-nav" aria-label="Main">
+          <a href="/#products">Shop</a>
+          <a href="/#how-it-works">How it Works</a>
+          <a href="/#about">About</a>
+          <a href="/quote" aria-current="page">Instant Quote</a>
+        </nav>
+      </div>
+    </div>
+  </header>
   <main class="wrap">
-    <a class="brand" href="/">
-      <img src="/logo-96.png" width="40" height="40" alt="" />
-      Pack Mule House
-    </a>
     <h1>Get an instant quote</h1>
     <p>Upload an STL or 3MF file and get a price, print time and filament estimate right away.</p>
     <div class="quote-embed">
@@ -35,5 +54,6 @@
     </nav>
     <p class="footer-note"><a href="https://sliceworth.com" target="_blank" rel="noopener">Run a print shop? Get instant quotes on your site</a></p>
   </main>
+  <script src="/nav.js" defer></script>
 </body>
 </html>

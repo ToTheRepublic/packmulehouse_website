@@ -28,3 +28,12 @@ test("every page links to /quote and carries the footer note", () => {
     assert.match(html, /Run a print shop\? Get instant quotes on your site/, f);
   }
 });
+
+test("quote page has the site header nav and mobile menu", () => {
+  const html = fs.readFileSync(new URL("../public/quote.html", import.meta.url), "utf8");
+  assert.match(html, /id="nav-toggle"/);
+  assert.match(html, /<nav class="nav" id="site-nav"/);
+  assert.match(html, /href="\/#products"/);
+  assert.match(html, /<script src="\/nav\.js" defer><\/script>/);
+  assert.match(html, /href="\/site-header\.css"/);
+});
