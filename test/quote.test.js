@@ -17,8 +17,8 @@ test("CSP allows Sliceworth in script-src and frame-src only", () => {
 test("quote page embeds the Sliceworth widget with a noscript fallback", () => {
   const html = fs.readFileSync(new URL("../public/quote.html", import.meta.url), "utf8");
   assert.match(html, /<h1>Get an instant quote<\/h1>/);
-  assert.ok(html.includes('<script src="https://sliceworth.com/embed.js" data-shop="packmule" async></script>'));
-  assert.match(html, /<noscript><iframe src="https:\/\/sliceworth\.com\/s\/packmule\/embed"/);
+  assert.ok(html.includes('<script src="https://sliceworth.com/embed.js" data-shop="packmule" data-theme="dark" async></script>'));
+  assert.match(html, /<noscript><iframe src="https:\/\/sliceworth\.com\/s\/packmule\/embed\?theme=dark"/);
 });
 
 test("every page links to /quote and carries the footer note", () => {
