@@ -1,0 +1,28 @@
+/* Site header + mobile menu for pages that use policy.css (copied from index.html). */
+.header { position: sticky; top: 0; z-index: 100; background: rgba(11, 11, 11, 0.85); backdrop-filter: blur(12px); border-bottom: 1px solid var(--border); }
+.header-inner { max-width: 1120px; margin: 0 auto; padding: 0.85rem 1.5rem; display: flex; align-items: center; justify-content: space-between; gap: 1.5rem; }
+.header a { color: inherit; text-decoration: none; }
+.logo-link { display: flex; align-items: center; gap: 0.75rem; }
+.logo-img { display: block; width: 48px; height: 48px; max-width: none; border-radius: 50%; object-fit: cover; border: 2px solid #5c8a8a; }
+.logo-text { font-family: "Space Grotesk", sans-serif; font-weight: 600; font-size: 1.15rem; letter-spacing: -0.02em; color: var(--text); }
+.logo-text span { color: var(--tan); }
+.header-actions { display: flex; align-items: center; gap: 1rem; }
+.nav { display: flex; align-items: center; gap: 1.75rem; }
+.header .nav a { font-size: 0.95rem; font-weight: 500; color: var(--text-muted); transition: color 0.2s; }
+.header .nav a:hover, .header .nav a[aria-current="page"] { color: var(--text); }
+.nav-toggle { display: none; align-items: center; justify-content: center; width: 44px; height: 44px; padding: 0; border: 1px solid rgba(255, 255, 255, 0.14); border-radius: 10px; background: transparent; color: var(--text); cursor: pointer; }
+.nav-toggle:focus-visible { outline: 2px solid var(--tan); outline-offset: 2px; }
+.nav-toggle-bars, .nav-toggle-bars::before, .nav-toggle-bars::after { display: block; width: 20px; height: 2px; background: currentColor; border-radius: 2px; position: relative; transition: transform 0.2s, opacity 0.2s; }
+.nav-toggle-bars::before, .nav-toggle-bars::after { content: ""; position: absolute; left: 0; }
+.nav-toggle-bars::before { top: -6px; }
+.nav-toggle-bars::after { top: 6px; }
+.nav-toggle[aria-expanded="true"] .nav-toggle-bars { background: transparent; }
+.nav-toggle[aria-expanded="true"] .nav-toggle-bars::before { transform: translateY(6px) rotate(45deg); }
+.nav-toggle[aria-expanded="true"] .nav-toggle-bars::after { transform: translateY(-6px) rotate(-45deg); }
+@media (max-width: 860px) {
+  .nav-toggle { display: inline-flex; }
+  .nav { display: none; position: absolute; top: 100%; left: 0; right: 0; flex-direction: column; align-items: stretch; gap: 0; padding: 0.5rem 1rem 1rem; background: var(--bg, #0b0b0b); border-bottom: 1px solid rgba(255, 255, 255, 0.08); box-shadow: 0 12px 24px rgba(0, 0, 0, 0.35); }
+  .nav.open { display: flex; }
+  .header .nav a { padding: 0.85rem 0.25rem; font-size: 1.05rem; border-bottom: 1px solid rgba(255, 255, 255, 0.06); }
+  .header .nav a:last-child { border-bottom: 0; }
+}
