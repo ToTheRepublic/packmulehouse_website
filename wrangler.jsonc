@@ -33,13 +33,13 @@
   "vars": {
     // Production application id (sq0idp-…) goes here before checkout is turned on.
     // Only the payment form uses it.
-    "SQUARE_APPLICATION_ID": "",
+    "SQUARE_APPLICATION_ID": "sq0idp-23Q9V7wsHJsZe5StMGT6Ug",
     "SQUARE_LOCATION_ID": "LB5Y7PT3GZE96",
     "SQUARE_ENVIRONMENT": "production",
     "SHIPPING_CENTS": "1000",
     // Online checkout. "false" shows products and prices with an "ordering opens
     // soon" note, hides the cart, and makes /api/pay and /api/quote refuse.
-    "CHECKOUT_ENABLED": "false",
+    "CHECKOUT_ENABLED": "true",
     // Made-to-order lead times in weeks. Keys are Square category ids or names
     // (or a substring of the item name). Default is 1 week.
     "LEAD_TIME_WEEKS_DEFAULT": "1",
@@ -67,7 +67,7 @@
     // Public site origin (canonical links, FormSubmit). Change this at go-live.
     "SITE_ORIGIN": "https://packmulehouse.com",
     // Resend From address. Sandbox can use Resend's onboarding sender; production needs a verified domain.
-    "EMAIL_FROM": "Pack Mule House <onboarding@resend.dev>",
+    "EMAIL_FROM": "Pack Mule House <orders@packmulehouse.com>",
     // Shop sections, in order. Each entry is a Square category name or id, or
     // "Section label = Category A | Category B" to group several categories.
     // Names match case-insensitively. Leave unset to list the whole catalog.
@@ -105,7 +105,7 @@
       "vars": {
         // Production application id (sq0idp-…) from the Square Developer Console.
         // Only the payment form needs it, and checkout is off here.
-        "SQUARE_APPLICATION_ID": "",
+        "SQUARE_APPLICATION_ID": "sq0idp-23Q9V7wsHJsZe5StMGT6Ug",
         "SQUARE_LOCATION_ID": "LB5Y7PT3GZE96",
         "SQUARE_ENVIRONMENT": "production",
         "SHIPPING_CENTS": "1000",
