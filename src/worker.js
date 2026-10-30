@@ -42,6 +42,7 @@ import {
 import { discordSafe, headerSafe, plainSafe, telegramSafe } from "./sanitize.js";
 import { paymentErrorMessage } from "./payments.js";
 import { applyOrderTax, taxConfigPublic, totalsFromSquareOrder } from "./tax.js";
+import { withAssetType } from "./content-type.js";
 import {
   applePayAssociation,
   flatRateShippingPhrase,
@@ -1596,6 +1597,9 @@ async function serveAsset(request, env, rewritePath) {
       }
     }
   }
+
+  // Assets stored without a type come back as octet-stream; fix it by extension.
+  if (res && res.status === 200) res = withAssetType(res, usedPath);
 
   if (res && isHtmlOrScript(usedPath) && res.status === 200) {
     const headers = new Headers(res.headers);
