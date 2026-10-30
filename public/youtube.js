@@ -38,18 +38,28 @@
     link.setAttribute("aria-label", "Watch the X-Frame Drop-In System video on YouTube");
     var img = document.createElement("img");
     img.src = "https://i.ytimg.com/vi/" + VIDEO_ID + "/hqdefault.jpg";
+    // Decorative: the link's aria-label already names the video.
     img.alt = "";
-    img.loading = "lazy";
+    img.width = 480;
+    img.height = 360;
     var label = document.createElement("span");
     label.className = "video-fallback-label";
     label.textContent = "▶ Watch on YouTube";
     link.append(img, label);
     mount.replaceWith(link);
+    reveal();
     try { if (player && player.destroy) player.destroy(); } catch (e) { /* ignore */ }
   }
 
+  // Keep the player iframe invisible until it is ready so the wrapper's
+  // thumbnail background shows instead of a black box while YouTube loads.
+  var wrapper = document.querySelector(".video-wrapper");
+  function reveal() { if (wrapper) wrapper.classList.remove("yt-pending"); }
+
   window.onYouTubeIframeAPIReady = function () {
     readyTimer = setTimeout(showFallback, 15000);
+    if (wrapper) wrapper.classList.add("yt-pending");
+    setTimeout(reveal, 8000);
     player = new YT.Player("yt-player", {
       host: "https://www.youtube-nocookie.com",
       videoId: VIDEO_ID,
@@ -72,6 +82,7 @@
         },
         onReady: function () {
           clearTimeout(readyTimer);
+          reveal();
           forceCaptionsOff();
           try {
             player.mute();

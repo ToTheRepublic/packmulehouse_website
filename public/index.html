@@ -337,7 +337,8 @@
       padding-bottom: 56.25%; /* 16:9 */
       border-radius: var(--radius-lg);
       overflow: hidden;
-      background: #000;
+      /* YouTube's own thumbnail shows until the player paints (no black box). */
+      background: #000 url("https://i.ytimg.com/vi/5uQ2c1h6dxc/hqdefault.jpg") center / cover no-repeat;
       box-shadow: 0 20px 40px -15px rgba(0, 0, 0, 0.5);
       border: 1px solid var(--border);
     }
@@ -372,6 +373,10 @@
     .video-fallback:hover img,
     .video-fallback:focus-visible img {
       opacity: 1;
+    }
+
+    .video-wrapper.yt-pending iframe {
+      opacity: 0;
     }
 
     .video-wrapper iframe,
@@ -680,6 +685,15 @@
       text-align: center;
       color: var(--text-muted);
       padding: 2rem 1rem;
+    }
+
+    /* Initial "Loading products…" reserves about one card's height so the
+       page doesn't jump when the catalog arrives. checkout.js replaces it. */
+    .products-status.is-loading {
+      min-height: 480px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
     }
 
     .products-status.error {
@@ -1561,7 +1575,7 @@
 
     <div id="product-mount" aria-live="polite">
       <div class="product-grid" id="product-grid">
-        <div class="products-status">Loading products…</div>
+        <div class="products-status is-loading" role="status">Loading products…</div>
       </div>
     </div>
     <p class="quote-link"><a href="/quote">Have your own model? Get an instant quote</a></p>
