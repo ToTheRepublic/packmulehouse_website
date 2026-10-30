@@ -44,6 +44,7 @@ import { discordSafe, headerSafe, plainSafe, telegramSafe } from "./sanitize.js"
 import { paymentErrorMessage } from "./payments.js";
 import { applyOrderTax, taxConfigPublic, totalsFromSquareOrder } from "./tax.js";
 import { withAssetType } from "./content-type.js";
+import { findJsonLdProduct, injectProductOffers, offersFromProduct } from "./jsonld.js";
 import {
   applePayAssociation,
   flatRateShippingPhrase,
@@ -259,6 +260,102 @@ async function fetchCatalogDiscounts(env) {
 
 function notifyEmail(env) {
   return (env.MERCHANT_NOTIFY_EMAIL || MERCHANT_NOTIFY_EMAIL).trim();
+}
+
+/**
+ * Square catalog + inventory, cached in the isolate for a short TTL
+ * (CATALOG_TTL_SECONDS, default 60) so page loads and JSON-LD don't hit
+ * Square every request. Prices, names, images and descriptions all come
+ * from here. Read-only Square calls.
+ */
+const catalogMemo = { at: 0, data: null, pending: null };
+
+export function catalogTtlMs(env) {
+  const n = Number(env?.CATALOG_TTL_SECONDS);
+  return (Number.isFinite(n) && n >= 0 ? n : 60) * 1000;
+}
+
+export function resetCatalogCache() {
+  catalogMemo.at = 0;
+  catalogMemo.data = null;
+  catalogMemo.pending = null;
+}
+
+async function fetchCatalogSnapshot(env) {
+  const objects = await listCatalog(env);
+  const variationIds = collectTrackedVariationIds(objects, env.SQUARE_LOCATION_ID);
+  let inventoryMap = new Map();
+  try {
+    inventoryMap = await batchInventoryCounts(env, variationIds);
+  } catch (e) {
+    console.warn("inventory lookup failed", e.message);
+  }
+  return { objects, inventoryMap };
+}
+
+export async function cachedCatalogSnapshot(env, now = Date.now()) {
+  const ttl = catalogTtlMs(env);
+  if (catalogMemo.data && now - catalogMemo.at < ttl) return catalogMemo.data;
+  if (!catalogMemo.pending) {
+    catalogMemo.pending = fetchCatalogSnapshot(env)
+      .then((data) => {
+        catalogMemo.data = data;
+        catalogMemo.at = Date.now();
+        return data;
+      })
+      .finally(() => {
+        catalogMemo.pending = null;
+      });
+  }
+  return catalogMemo.pending;
+}
+
+/** Mapped products (with stock signals) from the cached snapshot. */
+async function cachedProducts(env) {
+  const { objects, inventoryMap } = await cachedCatalogSnapshot(env);
+  const mto = await getMtoState(env);
+  return { products: mapCatalogToProducts(objects, inventoryMap, env, mto), mto };
+}
+
+const JSONLD_KV_KEY = "jsonld:offers:v1";
+
+function withTimeout(promise, ms) {
+  let t;
+  return Promise.race([
+    promise,
+    new Promise((_, reject) => {
+      t = setTimeout(() => reject(new Error("timeout")), ms);
+    }),
+  ]).finally(() => clearTimeout(t));
+}
+
+/**
+ * Fill the homepage Product JSON-LD offers from Square. Falls back to the
+ * last good offers stored in KV, then to a Product with no offers.
+ */
+export async function withProductJsonLd(html, env, origin, loadProducts = cachedProducts) {
+  const key = String(env.JSONLD_PRODUCT_CATEGORY || "X-Frame");
+  let offers = null;
+  let product = null;
+  try {
+    const { products } = await withTimeout(loadProducts(env), 3000);
+    product = findJsonLdProduct(products, key);
+    offers = product ? offersFromProduct(product, origin) : null;
+    if (offers && env.MTO_STATE) {
+      const body = JSON.stringify(offers);
+      const prev = await env.MTO_STATE.get(JSONLD_KV_KEY).catch(() => null);
+      if (prev !== body) await env.MTO_STATE.put(JSONLD_KV_KEY, body).catch(() => {});
+    }
+  } catch (e) {
+    console.warn("JSON-LD offers from Square failed", e?.message);
+    try {
+      const prev = env.MTO_STATE ? await env.MTO_STATE.get(JSONLD_KV_KEY) : null;
+      if (prev) offers = JSON.parse(prev);
+    } catch {
+      offers = null;
+    }
+  }
+  return injectProductOffers(html, offers, { product });
 }
 
 /** Paginate catalog list for ITEM + IMAGE objects. */
@@ -489,6 +586,7 @@ function mapCatalogToProducts(objects, inventoryMap, env, mto) {
             amount: money.amount,
             currency: money.currency || "USD",
             priceLabel: formatMoney(money.amount, money.currency || "USD"),
+            imageUrl: vd.image_ids?.[0] ? images.get(vd.image_ids[0]) || null : null,
             trackInventory: tracks,
             stock: shelf,
           },
@@ -566,18 +664,7 @@ async function handleConfig(env) {
 async function handleCatalog(env) {
   try {
   const cache = createLookupCache();
-  const objects = await listCatalog(env);
-  const variationIds = collectTrackedVariationIds(objects, env.SQUARE_LOCATION_ID);
-
-  let inventoryMap = new Map();
-  try {
-    inventoryMap = await batchInventoryCounts(env, variationIds);
-  } catch (e) {
-    console.warn("inventory lookup failed", e.message);
-  }
-
-  const mto = await getMtoState(env);
-  const mapped = mapCatalogToProducts(objects, inventoryMap, env, mto);
+  const { products: mapped, mto } = await cachedProducts(env);
   // No stock counts on the storefront until checkout is on.
   const products = checkoutEnabled(env) ? mapped : withoutStockSignals(mapped);
   const filter = catalogFilterFromEnv(env);
@@ -712,7 +799,7 @@ async function allocateOrderLines(env, lines) {
  * 3) Resend email (optional RESEND_API_KEY secret)
  * 4) FormSubmit → Gmail (best-effort; flaky from servers)
  */
-async function notifyMerchant(env, payload) {
+export async function notifyMerchant(env, payload) {
   const subject = payload.subject;
   const text = payload.text;
   const results = [];
@@ -1613,7 +1700,11 @@ async function serveAsset(request, env, rewritePath) {
     if (isHtml) headers.set("CDN-Cache-Control", "no-store");
     if (isHtml) {
       headers.set("Content-Type", "text/html; charset=utf-8");
-      const html = htmlTokens(await res.text(), env, request);
+      let html = htmlTokens(await res.text(), env, request);
+      if (usedPath === "/index.html" || usedPath === "/") {
+        const origin = String(env.SITE_ORIGIN || base.origin).replace(/\/$/, "");
+        html = await withProductJsonLd(html, env, origin);
+      }
       return new Response(html, { status: res.status, headers });
     }
     return new Response(res.body, {

@@ -101,3 +101,29 @@ What does not work until that is done, or at all in some places:
 - `SQUARE_ENVIRONMENT=production` on the custom domain is what removes `X-Robots-Tag: noindex` and the `robots.txt` disallow. `*.workers.dev` stays noindex even in production.
 - Place a sandbox order before cutting over, then a small live order, and confirm the ntfy / Discord / email alert no longer uses the old topic.
 - Card checkout needs the Content-Security-Policy already on the worker (Square Web Payments SDK, Google Fonts, YouTube). If the card form is blank, check the browser console for a CSP report before relaxing the policy.
+
+## Square-driven pricing (size picker + JSON-LD)
+
+- Product names, prices, images and descriptions come from the Square catalog
+  at runtime. The Worker caches the catalog + inventory in the isolate for
+  `CATALOG_TTL_SECONDS` (default 60), so a price change in Square shows on the
+  site within about a minute. Nothing price-related is hard-coded in HTML.
+- Products with more than one Square variation get a picker ("Choose size" on
+  X-Frame, "Choose option" elsewhere). The card says "Starting at" the lowest
+  price until a size is picked, then that size's price. Add to cart sends the
+  picked variation's Square id; `/api/quote` and `/api/pay` re-price from Square.
+- The homepage Product JSON-LD offers are written server-side from the same
+  data (`src/jsonld.js`). If Square is unreachable it uses the last good offers
+  stored in KV (`jsonld:offers:v1`), and failing that omits `offers`. Set
+  `JSONLD_PRODUCT_CATEGORY` to point it at another Square category.
+
+## Before turning checkout on (any Worker)
+
+1. `SQUARE_APPLICATION_ID` var: the production `sq0idp-…` id. Empty means the
+   card form cannot load.
+2. Secrets: `NTFY_TOPIC` and/or `DISCORD_WEBHOOK_URL` (at least one, or you
+   won't hear about orders; the order itself still completes),
+   `ADMIN_PASSWORD`, `ADMIN_SESSION_SECRET`.
+3. Optional: `RESEND_API_KEY` (+ a verified-domain `EMAIL_FROM`). Without it the
+   email step is skipped; ntfy/Discord still fire and the order still succeeds.
+4. `CHECKOUT_ENABLED` = `"true"`.

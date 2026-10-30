@@ -482,18 +482,24 @@
     return { min, label };
   }
 
-  function addToCart(product, quantity) {
-    const variation =
-      product.variations.find((v) => v.id === product.defaultVariationId) ||
-      product.variations[0];
+  function addToCart(product, quantity, variationId) {
+    const picker = window.PMHPicker;
+    const variation = picker
+      ? picker.selectedVariation(product, variationId)
+      : product.variations.find((v) => v.id === (variationId || product.defaultVariationId)) ||
+        product.variations[0];
     if (!variation) {
-      showToast("This product can’t be added right now.");
-      return;
+      showToast(
+        picker && picker.needsPicker(product)
+          ? `Choose a ${picker.pickerLabel(product).toLowerCase()} first`
+          : "This product can’t be added right now."
+      );
+      return false;
     }
 
     const max = lineMaxQty({
       ...variation,
-      maxQty: product.maxQty,
+      maxQty: variation.maxQty ?? product.maxQty,
       trackInventory: variation.trackInventory ?? product.trackInventory,
     });
 
@@ -534,11 +540,14 @@
           ? variation.lowStock
           : null;
     const mtoPart = shelf == null ? 0 : Math.max(0, nextQty - shelf);
+    const label =
+      product.variations.length > 1 ? `${product.name} (${variation.name})` : product.name;
     const added =
       variation.availability === "mto" || mtoPart > 0
-        ? `Added ${product.name}${mtoPart ? ` (${mtoPart} made to order)` : " (made to order)"}`
-        : `Added ${product.name} to cart`;
+        ? `Added ${label}${mtoPart ? ` (${mtoPart} made to order)` : " (made to order)"}`
+        : `Added ${label} to cart`;
     showToast(added);
+    return true;
   }
 
   function setLineQty(variationId, quantity) {
@@ -693,8 +702,10 @@
 
       const image = document.createElement("div");
       image.className = "product-image";
+      let imgEl = null;
       if (p.imageUrl) {
         const img = document.createElement("img");
+        imgEl = img;
         img.src = p.imageUrl;
         img.alt = p.name;
         img.loading = "lazy";
@@ -720,14 +731,78 @@
 
       const price = document.createElement("div");
       price.className = "product-price";
-      const range = priceRange(p);
-      if (range) {
-        const from = document.createElement("span");
-        from.className = "price-from";
-        from.textContent = "Starting at";
-        price.append(from, range.label);
-      } else {
-        price.textContent = p.priceLabel;
+      const priceMain = document.createElement("span");
+      priceMain.className = "price-main";
+      price.appendChild(priceMain);
+      let selectedId = null;
+      const picker = window.PMHPicker;
+      const renderPrice = () => {
+        const d = picker
+          ? picker.priceDisplay(p, selectedId)
+          : { from: !!priceRange(p), label: (priceRange(p) || p).label || p.priceLabel };
+        priceMain.replaceChildren();
+        if (d.from) {
+          const from = document.createElement("span");
+          from.className = "price-from";
+          from.textContent = "Starting at";
+          priceMain.append(from);
+        }
+        priceMain.append(d.label);
+      };
+      renderPrice();
+
+      let pickerEl = null;
+      if (picker && picker.needsPicker(p)) {
+        const labels = picker.optionLabels(p);
+        pickerEl = document.createElement("fieldset");
+        pickerEl.className = "variant-picker";
+        const legend = document.createElement("legend");
+        legend.textContent = `Choose ${picker.pickerLabel(p).toLowerCase()}`;
+        const opts = document.createElement("div");
+        opts.className = "variant-options";
+        opts.setAttribute("role", "radiogroup");
+        opts.setAttribute("aria-label", `${picker.pickerLabel(p)} for ${p.name}`);
+        const buttons = [];
+        const choose = (v, focus) => {
+          selectedId = v.id;
+          for (const b of buttons) {
+            const on = b.dataset.variationId === v.id;
+            b.setAttribute("aria-checked", on ? "true" : "false");
+            b.tabIndex = on ? 0 : -1;
+            if (on && focus) b.focus();
+          }
+          pickerEl.classList.remove("needs-pick");
+          renderPrice();
+          updateButton();
+          if (v.imageUrl && imgEl) imgEl.src = v.imageUrl;
+          announce(`${labels.get(v.id)}, ${v.priceLabel}`);
+        };
+        const vars = picker.sellable(p);
+        vars.forEach((v, i) => {
+          const b = document.createElement("button");
+          b.type = "button";
+          b.className = "variant-option";
+          b.setAttribute("role", "radio");
+          b.setAttribute("aria-checked", "false");
+          b.tabIndex = i === 0 ? 0 : -1;
+          b.dataset.variationId = v.id;
+          const name = document.createElement("span");
+          name.textContent = labels.get(v.id);
+          const vp = document.createElement("span");
+          vp.className = "variant-price";
+          vp.textContent = v.priceLabel;
+          b.append(name, vp);
+          b.addEventListener("click", () => choose(v, false));
+          b.addEventListener("keydown", (e) => {
+            const step = { ArrowRight: 1, ArrowDown: 1, ArrowLeft: -1, ArrowUp: -1 }[e.key];
+            if (!step) return;
+            e.preventDefault();
+            choose(vars[(i + step + vars.length) % vars.length], true);
+          });
+          buttons.push(b);
+          opts.appendChild(b);
+        });
+        pickerEl.append(legend, opts);
       }
       if (pricesIncludeTax()) {
         const note = document.createElement("span");
@@ -786,7 +861,26 @@
           ? "Order (made to order)"
           : "Add to cart";
       btn.disabled = unavailable;
-      btn.addEventListener("click", () => addToCart(p, pickQty));
+      function updateButton() {
+        const v = picker ? picker.selectedVariation(p, selectedId) : null;
+        if (!v || unavailable) return;
+        const off = v.availability === "unavailable" || (v.maxQty ?? 1) <= 0;
+        btn.disabled = off;
+        btn.textContent = off
+          ? "Unavailable"
+          : v.availability === "mto"
+            ? "Order (made to order)"
+            : "Add to cart";
+      }
+      btn.addEventListener("click", () => {
+        if (!addToCart(p, pickQty, selectedId) && pickerEl && !selectedId) {
+          pickerEl.classList.remove("needs-pick");
+          void pickerEl.offsetWidth;
+          pickerEl.classList.add("needs-pick");
+          const first = pickerEl.querySelector(".variant-option");
+          if (first) first.focus();
+        }
+      });
 
       if (config && config.checkoutEnabled === false) {
         const note = document.createElement("p");
@@ -797,7 +891,8 @@
         actions.append(qty, btn);
       }
       footer.append(price, actions);
-      body.append(h3, desc, footer);
+      if (pickerEl) body.append(h3, desc, pickerEl, footer);
+      else body.append(h3, desc, footer);
 
       // FOMO / MTO label only when server provides stockDisplay
       if (p.stockDisplay) {

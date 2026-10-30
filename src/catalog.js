@@ -197,6 +197,7 @@ export function decorateVariation(v, mto, threshold) {
     amount: v.amount,
     currency: v.currency,
     priceLabel: v.priceLabel,
+    imageUrl: v.imageUrl || null,
     trackInventory: tracked,
     lowStock,
     stockDisplay,
