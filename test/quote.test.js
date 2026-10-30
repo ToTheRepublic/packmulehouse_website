@@ -37,3 +37,16 @@ test("quote page has the site header nav and mobile menu", () => {
   assert.match(html, /<script src="\/nav\.js" defer><\/script>/);
   assert.match(html, /href="\/site-header\.css"/);
 });
+
+test("quote page uses the same footer as the homepage", () => {
+  const grab = (f) => fs.readFileSync(new URL(`../public/${f}.html`, import.meta.url), "utf8").match(/<footer class="footer">[\s\S]*?<\/footer>/)?.[0];
+  const home = grab("index");
+  assert.ok(home, "homepage footer");
+  assert.equal(grab("quote"), home);
+  for (const f of ["index", "quote"]) {
+    const html = fs.readFileSync(new URL(`../public/${f}.html`, import.meta.url), "utf8");
+    assert.match(html, /href="\/site-footer\.css"/, f);
+  }
+  assert.match(home, /EST\. 2025 · Thermopolis, Wyoming/);
+  assert.match(home, /YouTube/);
+});

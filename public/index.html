@@ -1208,61 +1208,12 @@
       font-size: 0.95rem;
     }
     .quote-link a { color: var(--tan, #c4a574); text-decoration: underline; text-underline-offset: 3px; }
-    .footer-note {
-      max-width: var(--max-width);
-      text-align: left;
-      margin: 1.25rem auto 0;
-      font-size: 0.75rem;
-    }
-    .footer-note a { color: var(--text-dim, #6b675f); text-decoration: none; }
-    .footer-note a:hover { color: var(--text-muted, #9a958a); text-decoration: underline; }
-    .footer {
-      border-top: 1px solid var(--border);
-      padding: 2.5rem 1.5rem;
-      background: var(--bg);
-    }
 
-    .footer-inner {
-      max-width: var(--max-width);
-      margin: 0 auto;
-      display: flex;
-      flex-wrap: wrap;
-      justify-content: space-between;
-      gap: 1.5rem;
-      align-items: center;
-    }
 
-    .footer-brand {
-      display: flex;
-      align-items: center;
-      gap: 0.7rem;
-    }
 
-    .footer-brand img {
-      width: 36px;
-      height: 36px;
-      max-width: none;
-      border-radius: 50%;
-      object-fit: cover;
-      border: 1px solid var(--border);
-    }
 
-    .footer-brand span {
-      font-family: 'Space Grotesk', sans-serif;
-      font-weight: 600;
-      font-size: 0.95rem;
-    }
 
-    .footer-meta {
-      font-size: 0.85rem;
-      color: var(--text-dim);
-    }
 
-    .footer-links {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 0.75rem 1.25rem;
-    }
 
     .product-ship {
       display: block;
@@ -1301,14 +1252,7 @@
       font-size: 0.8rem;
     }
 
-    .footer-links a {
-      font-size: 0.9rem;
-      color: var(--text-muted);
-    }
 
-    .footer-links a:hover {
-      color: var(--tan);
-    }
 
     /* ========== RESPONSIVE ========== */
     @media (max-width: 860px) {
@@ -1384,6 +1328,7 @@
       }
     }
   </style>
+  <link rel="stylesheet" href="/site-footer.css" />
 </head>
 <body>
 
@@ -1523,7 +1468,7 @@
         EST. 2025 · Thermopolis, Wyoming
       </div>
       <div class="footer-links">
-        <a href="#products">Shop</a>
+        <a href="/#products">Shop</a>
         <a href="/shipping">Shipping</a>
         <a href="/returns">Returns</a>
         <a href="/privacy">Privacy</a>
