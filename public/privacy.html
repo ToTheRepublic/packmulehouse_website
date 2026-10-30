@@ -25,14 +25,34 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Space+Grotesk:wght@600&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="/policy.css" />
+  <link rel="stylesheet" href="/site-header.css" />
+  <link rel="stylesheet" href="/site-footer.css" />
 </head>
 <body>
+  <header class="header">
+    <div class="header-inner">
+      <a href="/" class="logo-link">
+        <picture>
+          <source type="image/webp" srcset="logo-48.webp 1x, logo-96.webp 2x" />
+          <img src="logo-96.png" srcset="logo-48.png 1x, logo-96.png 2x" width="48" height="48" alt="Pack Mule House" class="logo-img" />
+        </picture>
+        <div class="logo-text">Pack Mule <span>House</span></div>
+      </a>
+      <div class="header-actions">
+        <button type="button" class="nav-toggle" id="nav-toggle" aria-controls="site-nav" aria-expanded="false" aria-label="Open menu">
+          <span class="nav-toggle-bars" aria-hidden="true"></span>
+        </button>
+        <nav class="nav" id="site-nav" aria-label="Main">
+          <a href="/#products">Shop</a>
+          <a href="/#how-it-works">How it Works</a>
+          <a href="/#about">About</a>
+          <a href="/quote">Instant Quote</a>
+        </nav>
+      </div>
+    </div>
+  </header>
   <!-- Generic small-shop template. Review the copy before relying on it. -->
   <main class="wrap">
-    <a class="brand" href="/">
-      <img src="/logo-96.png" width="40" height="40" alt="Pack Mule House logo" />
-      Pack Mule House
-    </a>
     <h1>Privacy</h1>
     <p class="meta">Effective __POLICY_EFFECTIVE__ · Pack Mule House, Thermopolis, Wyoming</p>
     <!--@checkout--><h2>What checkout collects</h2><!--/@checkout--><!--@nocheckout--><h2>What we collect</h2><!--/@nocheckout-->
@@ -43,16 +63,33 @@
     <p>We use this information to fulfill the order, ship it, and send ourselves an order alert. We do not sell personal data, and we do not use it for unrelated marketing.</p>
     <h2>How long we keep it</h2>
     <p>Order details stay as long as we need them for shipping, returns, taxes, and our records. You can email <a href="mailto:__CONTACT_EMAIL__">__CONTACT_EMAIL__</a> to ask what we have from a particular order.</p>
-    <nav class="links" aria-label="Policies">
-      <a href="/">Shop</a>
-      <a href="/quote">Instant Quote</a>
-      <a href="/shipping">Shipping</a>
-      <a href="/returns">Returns</a>
-      <a href="/privacy" aria-current="page">Privacy</a>
-      <a href="/terms">Terms</a>
-      <a href="/contact">Contact</a>
-    </nav>
-    <p class="footer-note"><a href="https://sliceworth.com" target="_blank" rel="noopener">Run a print shop? Get instant quotes on your site</a></p>
   </main>
+
+  <footer class="footer">
+    <div class="footer-inner">
+      <div class="footer-brand">
+        <picture>
+          <source type="image/webp" srcset="logo-36.webp 1x, logo-72.webp 2x" />
+          <img src="logo-72.png" srcset="logo-36.png 1x, logo-72.png 2x" width="36" height="36" alt="Pack Mule House logo" />
+        </picture>
+        <span>Pack Mule House</span>
+      </div>
+      <div class="footer-meta">
+        EST. 2025 · Thermopolis, Wyoming
+      </div>
+      <div class="footer-links">
+        <a href="/#products">Shop</a>
+        <a href="/shipping">Shipping</a>
+        <a href="/returns">Returns</a>
+        <a href="/privacy">Privacy</a>
+        <a href="/terms">Terms</a>
+        <a href="/quote">Instant Quote</a>
+        <a href="/contact">Contact</a>
+        <a href="https://www.youtube.com/@PackMuleHouse" target="_blank" rel="noopener">YouTube</a>
+      </div>
+    </div>
+    <p class="footer-note"><a href="https://sliceworth.com" target="_blank" rel="noopener">Run a print shop? Get instant quotes on your site</a></p>
+  </footer>
+  <script src="/nav.js" defer></script>
 </body>
 </html>

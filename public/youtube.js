@@ -38,8 +38,10 @@
     link.setAttribute("aria-label", "Watch the X-Frame Drop-In System video on YouTube");
     var img = document.createElement("img");
     img.src = "https://i.ytimg.com/vi/" + VIDEO_ID + "/hqdefault.jpg";
+    // Decorative: the link's aria-label already names the video.
     img.alt = "";
-    img.loading = "lazy";
+    img.width = 480;
+    img.height = 360;
     var label = document.createElement("span");
     label.className = "video-fallback-label";
     label.textContent = "▶ Watch on YouTube";
