@@ -1643,6 +1643,15 @@ async function handleNotifyTest(env) {
   }
 }
 
+// Search engines index the apex domain only, so the sitemap always lists it.
+const SITEMAP_ORIGIN = "https://packmulehouse.com";
+const SITEMAP_PATHS = ["/", "/quote", "/shipping", "/returns", "/privacy", "/terms", "/contact"];
+
+function sitemapXml() {
+  const urls = SITEMAP_PATHS.map((p) => `  <url><loc>${SITEMAP_ORIGIN}${p}</loc></url>`).join("\n");
+  return `<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n${urls}\n</urlset>\n`;
+}
+
 async function route(request, env, url) {
   const adminHost = isAdminHost(url.hostname);
 
@@ -1650,10 +1659,19 @@ async function route(request, env, url) {
     const body = shouldNoindex(env, url.hostname)
       ? "User-agent: *\nDisallow: /\n"
       : "User-agent: *\nAllow: /\n";
-    return new Response(body, {
+    return new Response(`${body}\nSitemap: ${SITEMAP_ORIGIN}/sitemap.xml\n`, {
       headers: {
         "Content-Type": "text/plain; charset=utf-8",
         "Cache-Control": "no-store",
+      },
+    });
+  }
+
+  if (url.pathname === "/sitemap.xml") {
+    return new Response(sitemapXml(), {
+      headers: {
+        "Content-Type": "application/xml; charset=utf-8",
+        "Cache-Control": "public, max-age=3600",
       },
     });
   }
