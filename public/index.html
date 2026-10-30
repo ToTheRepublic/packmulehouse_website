@@ -767,22 +767,28 @@
        little under the shorter of the two so the section never shrinks.
        checkout.js replaces it. Re-measure if the shop sections change. */
     .products-status.is-loading {
-      min-height: 1680px;
+      min-height: 1760px;
       display: flex;
       align-items: flex-start;
       justify-content: center;
       padding-top: 6rem;
     }
 
+    @media (min-width: 900px) and (max-width: 1023px) {
+      .products-status.is-loading {
+        min-height: 1690px;
+      }
+    }
+
     @media (min-width: 600px) and (max-width: 899px) {
       .products-status.is-loading {
-        min-height: 1520px;
+        min-height: 1535px;
       }
     }
 
     @media (max-width: 599px) {
       .products-status.is-loading {
-        min-height: 2320px;
+        min-height: 2340px;
       }
     }
 
@@ -1834,7 +1840,7 @@
   <div id="cart-announcer" class="sr-only" aria-live="polite"></div>
 
   <script src="/variant-picker.js?v=1" defer></script>
-  <script src="/checkout.js?v=20" defer></script>
+  <script src="/checkout.js?v=21" defer></script>
   <script src="/nav.js" defer></script>
   <script src="/youtube.js" defer></script>
   <script src="/promo-video.js" defer></script>

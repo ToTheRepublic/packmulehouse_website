@@ -736,15 +736,19 @@
       price.appendChild(priceMain);
       let selectedId = null;
       const picker = window.PMHPicker;
+      const hasRange = picker ? picker.priceDisplay(p, null).from : !!priceRange(p);
       const renderPrice = () => {
         const d = picker
           ? picker.priceDisplay(p, selectedId)
           : { from: !!priceRange(p), label: (priceRange(p) || p).label || p.priceLabel };
         priceMain.replaceChildren();
-        if (d.from) {
+        // Keep the "Starting at" line's space after a pick so the card
+        // doesn't shrink and nudge the text below it.
+        if (d.from || hasRange) {
           const from = document.createElement("span");
           from.className = "price-from";
           from.textContent = "Starting at";
+          if (!d.from) from.style.visibility = "hidden";
           priceMain.append(from);
         }
         priceMain.append(d.label);

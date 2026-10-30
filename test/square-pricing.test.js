@@ -164,3 +164,12 @@ test("catalog snapshot is cached for CATALOG_TTL_SECONDS (default 60s)", async (
     resetCatalogCache();
   }
 });
+
+test("'Starting at' line keeps its space after a pick; placeholder sized per breakpoint", () => {
+  const js = read("checkout.js");
+  assert.match(js, /if \(d\.from \|\| hasRange\)/);
+  assert.match(js, /from\.style\.visibility = "hidden"/);
+  const html = read("index.html");
+  const loading = html.match(/\.products-status\.is-loading \{[^}]*min-height: (\d+)px/g) || [];
+  assert.ok(loading.length >= 4, "min-height at 4 breakpoints");
+});
