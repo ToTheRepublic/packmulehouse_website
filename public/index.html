@@ -1113,6 +1113,35 @@
       color: var(--teal-bright);
     }
 
+    /* ========== PROMO VIDEO (self-hosted loop) ========== */
+    .promo-video {
+      padding: 3.5rem 1.5rem;
+    }
+
+    .promo-video-inner {
+      max-width: var(--max-width);
+      margin: 0 auto;
+    }
+
+    .promo-video h2 {
+      font-family: 'Space Grotesk', sans-serif;
+      font-size: 1.75rem;
+      font-weight: 600;
+      margin-bottom: 1.75rem;
+    }
+
+    .promo-video video {
+      display: block;
+      width: 100%;
+      height: auto;
+      aspect-ratio: 16 / 9;
+      object-fit: cover;
+      border-radius: var(--radius-lg);
+      background: #000;
+      border: 1px solid var(--border);
+      box-shadow: 0 20px 40px -15px rgba(0, 0, 0, 0.5);
+    }
+
     /* ========== BENEFITS ========== */
     .benefits {
       background: var(--bg-elevated);
@@ -1420,6 +1449,19 @@
     <p class="quote-link"><a href="/quote">Have your own model? Get an instant quote</a></p>
   </section>
 
+  <!-- PROMO VIDEO (silent loop) -->
+  <section class="promo-video" id="promo-video" aria-labelledby="promo-video-heading">
+    <div class="promo-video-inner">
+      <div class="section-label">In motion</div>
+      <h2 id="promo-video-heading">How it works</h2>
+      <video id="promo-video-player" autoplay muted loop playsinline preload="metadata" poster="/xframe-promo-poster.jpg" width="1280" height="720" aria-label="X-Frame promo video" aria-describedby="promo-video-desc">
+        <source src="/xframe-promo.webm" type="video/webm" />
+        <source src="/xframe-promo.mp4" type="video/mp4" />
+      </video>
+      <p id="promo-video-desc" hidden>Silent looping animation: a picture frame is fitted with the X-Frame magnetic mount, leveled, and hung flush on the wall.</p>
+    </div>
+  </section>
+
   <!-- BENEFITS / HOW IT WORKS -->
   <section class="benefits" id="how-it-works">
     <div class="benefits-inner">
@@ -1618,5 +1660,6 @@
   <script src="/checkout.js?v=19" defer></script>
   <script src="/nav.js" defer></script>
   <script src="/youtube.js" defer></script>
+  <script src="/promo-video.js" defer></script>
 </body>
 </html>
