@@ -71,7 +71,9 @@ test("public catalog hides exact stock above the threshold and MTO remaining", (
     10
   );
   assert.equal(low.lowStock, 3);
-  assert.equal(low.stockDisplay, "Only 3 left");
+  assert.equal(low.stockDisplay, null, "no 'Only N left' label");
+  assert.equal(low.stockTone, null);
+  assert.equal(low.availability, "low");
 
   const mto = decorateVariation(
     { id: "v", name: "Kit", amount: 100, currency: "USD", priceLabel: "$1.00", trackInventory: true, stock: 0 },

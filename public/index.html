@@ -817,6 +817,27 @@
       visibility: visible;
     }
 
+    /* Phones: the checkout is a full-height sheet pinned to the top, not a
+       centred box. A centred box re-centres every time its content grows
+       (card form, wallets, quote) or the keyboard/autofill bar changes the
+       viewport, which moved the field being filled. */
+    @media (max-width: 600px) {
+      .modal-overlay {
+        padding: 0;
+        align-items: stretch;
+      }
+
+      .modal-overlay .modal {
+        width: 100%;
+        height: 100%;
+        max-height: none;
+        border-radius: 0;
+        border: 0;
+        overscroll-behavior: contain;
+        -webkit-overflow-scrolling: touch;
+      }
+    }
+
     .modal {
       width: min(440px, 100%);
       max-height: min(92vh, 720px);
@@ -920,7 +941,9 @@
       color: var(--text);
       padding: 0.7rem 0.85rem;
       font: inherit;
-      font-size: 0.95rem;
+      /* 16px or more: iOS Safari zooms (and pans) into any focused input
+         under 16px, which made autofill jump the checkout around. */
+      font-size: 16px;
     }
 
     .field input:focus,
@@ -929,8 +952,11 @@
       border-color: var(--teal);
     }
 
+    /* Reserve the Square card form's mounted height (iframe ~97px plus its
+       own padding/message row, ~143px at 390px wide) so the fields and
+       buttons below don't jump when it attaches. */
     #card-container {
-      min-height: 90px;
+      min-height: 143px;
       margin-bottom: 0.35rem;
     }
 
@@ -1840,7 +1866,7 @@
   <div id="cart-announcer" class="sr-only" aria-live="polite"></div>
 
   <script src="/variant-picker.js?v=1" defer></script>
-  <script src="/checkout.js?v=21" defer></script>
+  <script src="/checkout.js?v=22" defer></script>
   <script src="/nav.js" defer></script>
   <script src="/youtube.js" defer></script>
   <script src="/promo-video.js" defer></script>

@@ -44,7 +44,7 @@ test("Resend failing does not stop ntfy/Discord or throw", async () => {
     async () => {
       const r = await notifyMerchant({ ...env, RESEND_API_KEY: "bad" }, payload);
       assert.deepEqual(r.results.map((x) => x.channel), ["ntfy", "discord"]);
-      assert.match(r.errors.join(), /resend: invalid key/);
+      assert.match(r.errors.join(), /resend: Resend 401.*invalid key/);
     }
   );
 });
