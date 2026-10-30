@@ -799,6 +799,46 @@ async function allocateOrderLines(env, lines) {
  * 3) Resend email (optional RESEND_API_KEY secret)
  * 4) FormSubmit → Gmail (best-effort; flaky from servers)
  */
+export function ntfyMessage(topic, subject, text) {
+  return {
+    topic,
+    title: headerSafe(subject, 120),
+    message: plainSafe(text),
+    priority: 4,
+    tags: ["package", "shopping_cart"],
+  };
+}
+
+/**
+ * One Resend send. Throws with Resend's status and message (e.g. 403
+ * "The packmulehouse.com domain is not verified") so the log says why.
+ */
+export async function sendResendEmail(env, { to, subject, text, html, replyTo }) {
+  if (!env.RESEND_API_KEY) throw new Error("RESEND_API_KEY is not set");
+  const from = String(env.EMAIL_FROM || "").trim();
+  if (!from) throw new Error("EMAIL_FROM is not configured");
+  const res = await fetch("https://api.resend.com/emails", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${env.RESEND_API_KEY}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      from,
+      to: [to],
+      subject: headerSafe(subject, 180),
+      text,
+      html,
+      ...(replyTo ? { reply_to: replyTo } : {}),
+    }),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw new Error(`Resend ${res.status} ${data?.name || ""}: ${data?.message || "send failed"}`.trim());
+  }
+  return data;
+}
+
 export async function notifyMerchant(env, payload) {
   const subject = payload.subject;
   const text = payload.text;
@@ -814,19 +854,16 @@ export async function notifyMerchant(env, payload) {
     console.warn("ntfy skipped: NTFY_TOPIC secret is not set");
   } else {
     try {
-      const headers = {
-        Title: headerSafe(subject, 120),
-        Priority: "high",
-        Tags: "package,shopping_cart",
-        "Content-Type": "text/plain; charset=utf-8",
-      };
+      // JSON publish: the title can hold non-ASCII (em dash, names) without
+      // going through an HTTP header.
+      const headers = { "Content-Type": "application/json" };
       if (env.NTFY_TOKEN) {
         headers.Authorization = `Bearer ${env.NTFY_TOKEN}`;
       }
-      const res = await fetch(`${ntfyBase}/${encodeURIComponent(ntfyTopic)}`, {
+      const res = await fetch(ntfyBase, {
         method: "POST",
         headers,
-        body: plainSafe(text),
+        body: JSON.stringify(ntfyMessage(ntfyTopic, subject, text)),
       });
       if (!res.ok) {
         const body = await res.text();
@@ -834,7 +871,7 @@ export async function notifyMerchant(env, payload) {
       }
       results.push({ channel: "ntfy", ok: true });
     } catch (e) {
-      console.error("ntfy failed", e);
+      console.error(`ntfy failed: ${e?.message || e}`);
       errors.push(`ntfy: ${e.message}`);
     }
   }
@@ -862,7 +899,7 @@ export async function notifyMerchant(env, payload) {
       }
       results.push({ channel: "discord", ok: true });
     } catch (e) {
-      console.error("Discord failed", e);
+      console.error(`Discord failed: ${e?.message || e}`);
       errors.push(`discord: ${e.message}`);
     }
   }
@@ -888,7 +925,7 @@ export async function notifyMerchant(env, payload) {
       }
       results.push({ channel: "telegram", ok: true });
     } catch (e) {
-      console.error("Telegram failed", e);
+      console.error(`Telegram failed: ${e?.message || e}`);
       errors.push(`telegram: ${e.message}`);
     }
   }
@@ -896,36 +933,19 @@ export async function notifyMerchant(env, payload) {
   // --- 3) Resend email (reliable if configured) ---
   if (env.RESEND_API_KEY) {
     try {
-      const to = notifyEmail(env);
-      const from = String(env.EMAIL_FROM || "").trim();
-      if (!from) {
-        throw new Error("EMAIL_FROM is not configured");
-      }
       const html =
         payload.html ||
         `<pre style="font-family:sans-serif;white-space:pre-wrap">${escapeHtml(text)}</pre>`;
-      const res = await fetch("https://api.resend.com/emails", {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${env.RESEND_API_KEY}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          from,
-          to: [to],
-          subject: headerSafe(subject, 180),
-          text,
-          html,
-          ...(payload.replyTo ? { reply_to: payload.replyTo } : {}),
-        }),
+      const data = await sendResendEmail(env, {
+        to: notifyEmail(env),
+        subject,
+        text,
+        html,
+        replyTo: payload.replyTo,
       });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) {
-        throw new Error(data?.message || `Resend ${res.status}`);
-      }
       results.push({ channel: "resend", ok: true, id: data.id });
     } catch (e) {
-      console.error("Resend failed", e);
+      console.error(`Resend failed: ${e?.message || e}`);
       errors.push(`resend: ${e.message}`);
     }
   }
@@ -964,7 +984,7 @@ export async function notifyMerchant(env, payload) {
       }
       results.push({ channel: "formsubmit", ok: true });
     } catch (e) {
-      console.error("FormSubmit failed", e);
+      console.error(`FormSubmit failed: ${e?.message || e}`);
       errors.push(`formsubmit: ${e.message}`);
     }
   }
@@ -1169,6 +1189,130 @@ function buildOrderEmail({
       ? `**🛠 MTO order ${totalLabel}** from **${safeName}** — ship all within 1 week`
       : `**🛒 New order ${totalLabel}** from **${safeName}**`,
   };
+}
+
+/**
+ * Buyer's order confirmation (receipt). Plain, branded, no secrets or
+ * internal ids beyond the Square order id. Built from the same values the
+ * merchant alert uses.
+ */
+export function buildCustomerReceipt({
+  lines,
+  shipping,
+  subtotal,
+  discount,
+  discountLabel,
+  tax,
+  taxLabel,
+  taxIncluded,
+  taxNote,
+  total,
+  currency,
+  shippingInfo,
+  orderId,
+  promise,
+  contactEmail,
+}) {
+  const cur = currency || "USD";
+  const name = String(shippingInfo?.displayName || "").split(/\s+/)[0] || "there";
+  const addr = shippingInfo?.address || {};
+  const addressLines = [
+    shippingInfo?.displayName,
+    addr.address_line_1,
+    addr.address_line_2,
+    [addr.locality, [addr.administrative_district_level_1, addr.postal_code].filter(Boolean).join(" ")]
+      .filter(Boolean)
+      .join(", "),
+  ].filter(Boolean);
+  const shipPromise = promise || "Ships within 1 week (all items together)";
+  const rows = [
+    ["Subtotal", formatMoney(subtotal ?? 0, cur)],
+    ...(discount > 0 ? [[discountLabel || "Discount", `−${formatMoney(discount, cur)}`]] : []),
+    ["Shipping", formatMoney(shipping || 0, cur)],
+    ...(!taxIncluded && tax > 0 ? [[taxLabel || "Sales Tax", formatMoney(tax, cur)]] : []),
+  ];
+  const totalLabel = formatMoney(total, cur);
+
+  const text = plainSafe(
+    [
+      `Hi ${name},`,
+      "",
+      "Thanks for your order from Pack Mule House! Here's your receipt.",
+      "",
+      ...lines.map((l) => `${l.itemName} × ${l.quantity} — ${formatMoney(l.lineTotal, cur)}`),
+      "",
+      ...rows.map(([k, v]) => `${k}: ${v}`),
+      `Total paid: ${totalLabel}${taxIncluded ? ` (${taxNote || "prices include tax"})` : ""}`,
+      "",
+      `${shipPromise}.`,
+      "",
+      "Shipping to:",
+      ...addressLines,
+      "",
+      orderId ? `Order #${orderId}` : "",
+      `Questions? Reply to this email or write ${contactEmail}.`,
+      "",
+      "Pack Mule House · Thermopolis, Wyoming",
+    ]
+      .filter((l, i, a) => !(l === "" && a[i - 1] === ""))
+      .join("\n")
+  );
+
+  const td = 'style="padding:6px 0;border-bottom:1px solid #eee"';
+  const itemRows = lines
+    .map(
+      (l) =>
+        `<tr><td ${td}>${escapeHtml(l.itemName)} × ${l.quantity}</td><td ${td} align="right">${escapeHtml(formatMoney(l.lineTotal, cur))}</td></tr>`
+    )
+    .join("");
+  const sumRows = rows
+    .map(([k, v]) => `<tr><td style="padding:4px 0;color:#555">${escapeHtml(k)}</td><td align="right" style="padding:4px 0;color:#555">${escapeHtml(v)}</td></tr>`)
+    .join("");
+  const html = `<!doctype html><html><body style="margin:0;background:#f4f1ec;font-family:Helvetica,Arial,sans-serif;color:#1a1a1a">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr><td align="center" style="padding:24px 12px">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:560px;background:#fff;border-radius:10px;overflow:hidden">
+<tr><td style="background:#141414;color:#c4a574;padding:18px 24px;font-size:20px;font-weight:bold">Pack Mule House</td></tr>
+<tr><td style="padding:24px">
+<p style="margin:0 0 12px">Hi ${escapeHtml(name)},</p>
+<p style="margin:0 0 18px">Thanks for your order! Here's your receipt.</p>
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="font-size:15px">${itemRows}${sumRows}
+<tr><td style="padding:8px 0;font-weight:bold">Total paid</td><td align="right" style="padding:8px 0;font-weight:bold">${escapeHtml(totalLabel)}</td></tr></table>
+${taxIncluded ? `<p style="margin:4px 0 0;font-size:13px;color:#777">${escapeHtml(taxNote || "Prices include tax")}</p>` : ""}
+<p style="margin:18px 0 6px;font-weight:bold">${escapeHtml(shipPromise)}.</p>
+<p style="margin:12px 0 4px;color:#555">Shipping to:</p>
+<p style="margin:0;line-height:1.5">${addressLines.map(escapeHtml).join("<br>")}</p>
+${orderId ? `<p style="margin:18px 0 0;font-size:13px;color:#777">Order #${escapeHtml(orderId)}</p>` : ""}
+<p style="margin:12px 0 0;font-size:13px;color:#777">Questions? Reply to this email or write ${escapeHtml(contactEmail)}.</p>
+</td></tr>
+<tr><td style="padding:14px 24px;background:#faf8f5;font-size:12px;color:#888">Pack Mule House · Thermopolis, Wyoming</td></tr>
+</table></td></tr></table></body></html>`;
+
+  return {
+    to: shippingInfo?.email,
+    subject: `Your Pack Mule House order${orderId ? ` #${String(orderId).slice(-6)}` : ""} (${totalLabel})`,
+    text,
+    html,
+    replyTo: contactEmail,
+  };
+}
+
+/** Best-effort buyer receipt. Never throws; the order is already paid. */
+export async function sendCustomerReceipt(env, receipt) {
+  if (!env.RESEND_API_KEY) {
+    console.warn("customer receipt skipped: RESEND_API_KEY is not set");
+    return { ok: false, skipped: true };
+  }
+  if (!receipt?.to || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(receipt.to)) {
+    console.warn("customer receipt skipped: no valid buyer email");
+    return { ok: false, skipped: true };
+  }
+  try {
+    const data = await sendResendEmail(env, receipt);
+    return { ok: true, id: data.id };
+  } catch (e) {
+    console.error(`Customer receipt failed: ${e?.message || e}`);
+    return { ok: false, error: e?.message || String(e) };
+  }
 }
 
 async function resolveCartLines(env, rawItems, cache = createLookupCache()) {
@@ -1505,7 +1649,33 @@ async function handlePay(request, env) {
     const notifyResult = await notifyMerchant(env, mail);
     payload.notified = (notifyResult?.results || []).length > 0;
   } catch (e) {
-    console.error("Merchant notify failed", e);
+    console.error(`Merchant notify failed: ${e?.message || e}`);
+  }
+
+  try {
+    const receipt = await sendCustomerReceipt(
+      env,
+      buildCustomerReceipt({
+        lines,
+        shipping,
+        subtotal,
+        discount: discountCollected,
+        discountLabel: payload.discountLabel,
+        tax: taxCollected,
+        taxLabel: taxCfg.chargesTax ? `${taxCfg.name} (${taxCfg.label})` : null,
+        taxIncluded: taxCfg.included,
+        taxNote: taxCfg.note || null,
+        total: orderTotal,
+        currency: payload.currency,
+        shippingInfo,
+        orderId: order.id,
+        promise: mtoPromise(env),
+        contactEmail: notifyEmail(env),
+      })
+    );
+    payload.receiptSent = !!receipt.ok;
+  } catch (e) {
+    console.error(`Customer receipt failed: ${e?.message || e}`);
   }
 
   try {

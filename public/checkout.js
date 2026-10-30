@@ -344,6 +344,10 @@
   }
 
   /** Instant UI update; optional background Square confirm. */
+  function isTouchScreen() {
+    return !!(window.matchMedia && window.matchMedia("(pointer: coarse)").matches);
+  }
+
   function scheduleQuoteAndRender(opts) {
     const confirm = !!(opts && opts.confirm);
     // Always paint immediately from local promo math
@@ -898,8 +902,8 @@
       if (pickerEl) body.append(h3, desc, pickerEl, footer);
       else body.append(h3, desc, footer);
 
-      // FOMO / MTO label only when server provides stockDisplay
-      if (p.stockDisplay) {
+      // Made-to-order / unavailable label only. Low-stock counts are never shown.
+      if (p.stockDisplay && p.stockTone !== "fomo" && !/\bleft\b/i.test(p.stockDisplay)) {
         const stock = document.createElement("div");
         stock.className =
           "product-stock" + (p.stockTone ? ` ${p.stockTone}` : "");
@@ -1172,8 +1176,10 @@
       /* local totals stay on screen */
     }
     renderPaySummary();
+    // No auto-focus on touch screens: it pops the keyboard and scrolls the
+    // sheet before the shopper has looked at it. Desktop keeps it.
     const nameField = document.getElementById("ship-name");
-    if (nameField) nameField.focus();
+    if (nameField && !isTouchScreen()) nameField.focus({ preventScroll: true });
 
     try {
       await ensureCard();
@@ -1466,7 +1472,7 @@
     const shippingError = validateShipping(readShipping());
     if (shippingError) {
       setStatus(shippingError, "error");
-      document.getElementById("ship-name")?.focus();
+      document.getElementById("ship-name")?.focus({ preventScroll: isTouchScreen() });
       return;
     }
     setPayBusy(true);
@@ -1640,7 +1646,7 @@
     const shippingError = validateShipping(shipping);
     if (shippingError) {
       setStatus(shippingError, "error");
-      document.getElementById("ship-name")?.focus();
+      document.getElementById("ship-name")?.focus({ preventScroll: isTouchScreen() });
       if (continueBusy) setPayBusy(false);
       return;
     }
@@ -1836,7 +1842,7 @@
       const shippingError = validateShipping(readShipping());
       if (shippingError) {
         setStatus(shippingError, "error");
-        document.getElementById("ship-name")?.focus();
+        document.getElementById("ship-name")?.focus({ preventScroll: isTouchScreen() });
         return;
       }
       setPayBusy(true);

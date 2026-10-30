@@ -184,9 +184,9 @@ export function decorateVariation(v, mto, threshold) {
         availability = "unavailable";
       }
     } else if (shelf < threshold) {
+      // No "Only N left" label on the storefront (owner's call). The count
+      // stays internal so the cart can split shelf vs made-to-order units.
       lowStock = shelf;
-      stockDisplay = `Only ${shelf} left`;
-      stockTone = "fomo";
       availability = "low";
     }
   }
