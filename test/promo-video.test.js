@@ -7,6 +7,7 @@ test("homepage has the self-hosted promo video above Why X-Frame", () => {
   const sec = html.indexOf('<section class="promo-video"');
   assert.ok(sec > 0);
   assert.ok(sec < html.indexOf('<section class="benefits"'));
+  assert.match(html, /<h2 id="promo-video-heading">How it works<\/h2>/);
   const tag = html.match(/<video id="promo-video-player"[^>]*>/)[0];
   for (const a of ["autoplay", "muted", "loop", "playsinline", 'preload="metadata"', 'poster="/xframe-promo-poster.jpg"', "aria-label="]) assert.ok(tag.includes(a), a);
   assert.match(html, /<source src="\/xframe-promo\.mp4" type="video\/mp4"/);

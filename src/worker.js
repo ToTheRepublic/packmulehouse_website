@@ -18,6 +18,7 @@ import {
   variationTracksInventory,
 } from "./catalog.js";
 import { applySecurityHeaders, shouldNoindex } from "./headers.js";
+import { applyRange } from "./range.js";
 import { idempotencyKey, parseAttemptId } from "./idempotency.js";
 import {
   abortCheckout,
@@ -1539,6 +1540,7 @@ function unconditionalAssetRequest(url, request) {
   headers.delete("If-None-Match");
   headers.delete("If-Modified-Since");
   headers.delete("If-Range");
+  headers.delete("Range"); // ranges are cut from the full body in applyRange
   return new Request(url, { method: "GET", headers });
 }
 
@@ -1617,6 +1619,7 @@ async function serveAsset(request, env, rewritePath) {
     });
   }
 
+  if (res && res.status === 200) return applyRange(request, res);
   return res || error("Not found", 404);
 }
 
