@@ -607,6 +607,79 @@
       color: var(--text-dim);
     }
 
+    /* Size / option picker (one button per Square variation). */
+    .variant-picker {
+      border: 0;
+      margin: 0 0 0.9rem;
+      padding: 0;
+      min-width: 0;
+    }
+
+    .variant-picker legend {
+      font-size: 0.72rem;
+      font-weight: 500;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      color: var(--text-dim);
+      margin-bottom: 0.4rem;
+      padding: 0;
+    }
+
+    .variant-options {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 0.45rem;
+    }
+
+    .variant-option {
+      min-height: 44px;
+      padding: 0.45rem 0.6rem;
+      border: 1px solid rgba(255, 255, 255, 0.14);
+      border-radius: 10px;
+      background: transparent;
+      color: var(--text);
+      font: inherit;
+      font-size: 0.85rem;
+      line-height: 1.25;
+      text-align: left;
+      cursor: pointer;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+    }
+
+    .variant-option .variant-price {
+      font-size: 0.78rem;
+      color: var(--text-dim);
+    }
+
+    .variant-option:hover {
+      border-color: var(--teal);
+    }
+
+    .variant-option[aria-checked="true"] {
+      border-color: var(--tan);
+      background: rgba(196, 165, 116, 0.12);
+    }
+
+    .variant-option[aria-checked="true"] .variant-price {
+      color: var(--tan);
+    }
+
+    .variant-option:focus-visible {
+      outline: 2px solid var(--teal);
+      outline-offset: 2px;
+    }
+
+    .variant-picker.needs-pick .variant-options {
+      animation: pick-nudge 0.4s;
+    }
+
+    @keyframes pick-nudge {
+      25% { transform: translateX(-3px); }
+      75% { transform: translateX(3px); }
+    }
+
     .tax-note {
       margin: 0.35rem 0 0;
       font-size: 0.8rem;
@@ -687,13 +760,36 @@
       padding: 2rem 1rem;
     }
 
-    /* Initial "Loading products…" reserves about one card's height so the
-       page doesn't jump when the catalog arrives. checkout.js replaces it. */
+    /* Initial "Loading products…" reserves roughly the loaded catalog's
+       height (three sections, one feature card each, size picker on the
+       X-Frame card) so the page doesn't jump when it arrives. Measured at
+       1280/1024/900, 768/600 and 390 wide, with checkout on and off; set a
+       little under the shorter of the two so the section never shrinks.
+       checkout.js replaces it. Re-measure if the shop sections change. */
     .products-status.is-loading {
-      min-height: 480px;
+      min-height: 1760px;
       display: flex;
-      align-items: center;
+      align-items: flex-start;
       justify-content: center;
+      padding-top: 6rem;
+    }
+
+    @media (min-width: 900px) and (max-width: 1023px) {
+      .products-status.is-loading {
+        min-height: 1690px;
+      }
+    }
+
+    @media (min-width: 600px) and (max-width: 899px) {
+      .products-status.is-loading {
+        min-height: 1535px;
+      }
+    }
+
+    @media (max-width: 599px) {
+      .products-status.is-loading {
+        min-height: 2340px;
+      }
     }
 
     .products-status.error {
@@ -1432,59 +1528,6 @@
       },
       "manufacturer": {
         "@id": "__SITE_ORIGIN__/#organization"
-      },
-      "offers": {
-        "@type": "AggregateOffer",
-        "priceCurrency": "USD",
-        "lowPrice": "22.00",
-        "highPrice": "32.00",
-        "offerCount": 4,
-        "offers": [
-          {
-            "@type": "Offer",
-            "name": "4x6 Drop In Complete Kit",
-            "price": "22.00",
-            "priceCurrency": "USD",
-            "availability": "https://schema.org/InStock",
-            "url": "__SITE_ORIGIN__/#products",
-            "seller": {
-              "@id": "__SITE_ORIGIN__/#organization"
-            }
-          },
-          {
-            "@type": "Offer",
-            "name": "5x7 Drop In Complete Kit",
-            "price": "26.00",
-            "priceCurrency": "USD",
-            "availability": "https://schema.org/InStock",
-            "url": "__SITE_ORIGIN__/#products",
-            "seller": {
-              "@id": "__SITE_ORIGIN__/#organization"
-            }
-          },
-          {
-            "@type": "Offer",
-            "name": "8x10 Drop In Complete Kit",
-            "price": "32.00",
-            "priceCurrency": "USD",
-            "availability": "https://schema.org/InStock",
-            "url": "__SITE_ORIGIN__/#products",
-            "seller": {
-              "@id": "__SITE_ORIGIN__/#organization"
-            }
-          },
-          {
-            "@type": "Offer",
-            "name": "Peel and Stick Complete Kit (Existing Frames)",
-            "price": "27.00",
-            "priceCurrency": "USD",
-            "availability": "https://schema.org/InStock",
-            "url": "__SITE_ORIGIN__/#products",
-            "seller": {
-              "@id": "__SITE_ORIGIN__/#organization"
-            }
-          }
-        ]
       }
     }
   ]
@@ -1796,7 +1839,8 @@
   <div class="cart-toast" id="cart-toast" role="status" aria-live="polite"></div>
   <div id="cart-announcer" class="sr-only" aria-live="polite"></div>
 
-  <script src="/checkout.js?v=19" defer></script>
+  <script src="/variant-picker.js?v=1" defer></script>
+  <script src="/checkout.js?v=21" defer></script>
   <script src="/nav.js" defer></script>
   <script src="/youtube.js" defer></script>
   <script src="/promo-video.js" defer></script>
