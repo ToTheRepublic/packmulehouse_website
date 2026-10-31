@@ -60,14 +60,12 @@
     label: "Included",
     note: "Prices include tax",
   };
-  /** Square catalog promos (display only; amounts from /api/quote) */
-  let discountInfo = { promos: [], summary: "" };
   let mtoInfo = {
     open: true,
     promise: "Ships within 1 week (all items together)",
   };
   /**
-   * Totals for display. Prefer instant local estimate from Square promo list;
+   * Totals for display. Instant local estimate (shelf prices + shipping);
    * optional Square CalculateOrder only to confirm (cart open / checkout).
    */
   let quote = null; // last server quote (authoritative when present)
@@ -171,66 +169,15 @@
     return "USD";
   }
 
-  function volumePromos() {
-    return (discountInfo.promos || [])
-      .filter((p) => p.minItems != null && p.percent != null)
-      .slice()
-      .sort((a, b) => a.minItems - b.minItems);
-  }
-
-  /** Cart lines a promo can apply to (all lines when Square gave no scope). */
-  function promoLines(p) {
-    if (!Array.isArray(p.appliesTo)) return cart;
-    const ids = new Set(p.appliesTo);
-    return cart.filter((l) => ids.has(l.variationId));
-  }
-
-  function promoQty(p) {
-    return promoLines(p).reduce((n, l) => n + l.quantity, 0);
-  }
-
-  function promoSubtotal(p) {
-    let total = 0;
-    for (const l of promoLines(p)) {
-      const v = variationsById.get(l.variationId);
-      if (v) total += v.amount * l.quantity;
-    }
-    return total;
-  }
-
-  function promoText(p) {
-    return p.label || p.name || `${p.percent}% off ${p.minItems}+ items`;
-  }
-
-  /** Best volume promo from the Square list; Square applies the single best one. */
-  function bestLocalPromo() {
-    if (!cartCount()) return null;
-    let best = null;
-    let bestAmt = 0;
-    for (const p of volumePromos()) {
-      if (promoQty(p) < p.minItems) continue;
-      const amt = Math.round((promoSubtotal(p) * Number(p.percent)) / 100);
-      if (amt > bestAmt) {
-        best = p;
-        bestAmt = amt;
-      }
-    }
-    return best ? { promo: best, amount: bestAmt } : null;
-  }
-
-  /** Friendly label for a discount Square applied (by catalog id). */
+  /** Square's name for any discount it applied (none are auto-applied on the web). */
   function labelForApplied(applied, fallback) {
-    const list = Array.isArray(applied) ? applied : [];
-    const names = list.map((a) => {
-      const p = (discountInfo.promos || []).find((x) => x.id === a.catalogObjectId);
-      return p ? promoText(p) : a.name;
-    }).filter(Boolean);
+    const names = (Array.isArray(applied) ? applied : []).map((a) => a.name).filter(Boolean);
     return names.length ? [...new Set(names)].join(", ") : fallback;
   }
 
   /**
-   * Instant local estimate (no network). Matches simple Square volume % rules.
-   * Complex promos (BOGO, fixed $, time windows) may differ until server quote.
+   * Instant local estimate (no network). Website orders get no Square
+   * discounts, so this is subtotal + shipping (+ tax only in "added" mode).
    */
   function localTotals() {
     const currency = cartCurrency();
@@ -248,16 +195,14 @@
         local: true,
       };
     }
-    const best = bestLocalPromo();
-    const promo = best ? best.promo : null;
-    const discount = best ? best.amount : 0;
+    const discount = 0;
     const merch = Math.max(0, subtotal - discount);
     const ship = shippingCents;
     const tax = separateTaxCents(merch, ship);
     return {
       subtotal,
       discount,
-      discountLabel: promo ? promoText(promo) : null,
+      discountLabel: null,
       shipping: ship,
       tax,
       taxLabel: chargesTaxNow() ? taxLabelTextFallback() : null,
@@ -389,7 +334,7 @@
 
   function scheduleQuoteAndRender(opts) {
     const confirm = !!(opts && opts.confirm);
-    // Always paint immediately from local promo math
+    // Always paint immediately from local math
     renderCartLines();
     if (panelPay && !panelPay.hidden) renderPaySummary();
     if (!confirm || !cart.length) return;
@@ -1133,20 +1078,6 @@
       banner.style.marginBottom = "0";
       paySummary.appendChild(banner);
     }
-
-    const next = volumePromos()
-      .filter((p) => promoQty(p) < p.minItems)
-      .filter((p) => !bestLocalPromo() || p.percent > Number(bestLocalPromo().promo.percent))[0];
-    if (next) {
-      const need = next.minItems - promoQty(next);
-      const hint = document.createElement("p");
-      hint.className = "field-hint";
-      hint.style.marginTop = "0.65rem";
-      const scope = next.scope && next.scope !== "items" ? next.scope : "items";
-      const noun = need === 1 ? scope.replace(/s$/, "") : scope;
-      hint.textContent = `Add ${need} more ${noun} for ${next.percent}% off`;
-      paySummary.appendChild(hint);
-    }
   }
 
   function focusableIn(root) {
@@ -1225,12 +1156,7 @@
     panelPay.hidden = true;
     if (panelConfirm) panelConfirm.hidden = true;
     checkoutTitle.textContent = "Your cart";
-    checkoutSubtitle.textContent =
-      discountInfo.summary &&
-      discountInfo.summary !== "None" &&
-      !String(discountInfo.summary).startsWith("None")
-        ? discountInfo.summary
-        : "Add kits, then checkout when you’re ready";
+    checkoutSubtitle.textContent = "Add kits, then checkout when you’re ready";
     setStatus("");
     // Instant totals first, then confirm with Square in background
     scheduleQuoteAndRender({ confirm: true });
@@ -1876,7 +1802,6 @@
       syncShippingCopy();
       if (config.tax) taxInfo = { ...taxInfo, ...config.tax };
       syncTaxNote();
-      if (config.discounts) discountInfo = { ...discountInfo, ...config.discounts };
       if (config.mto) mtoInfo = { ...mtoInfo, ...config.mto };
 
       const checkoutOn = config.checkoutEnabled !== false && !shopOnly;
@@ -1904,7 +1829,6 @@
       syncShippingCopy();
       if (catalog.tax) taxInfo = { ...taxInfo, ...catalog.tax };
       syncTaxNote();
-      if (catalog.discounts) discountInfo = { ...discountInfo, ...catalog.discounts };
       if (catalog.mto) mtoInfo = { ...mtoInfo, ...catalog.mto };
       const products = catalog.products || [];
       indexCatalog(products);

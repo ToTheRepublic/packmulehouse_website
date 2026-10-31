@@ -45,7 +45,7 @@ test("included orders have no tax line and still auto-apply discounts", () => {
   const cfg = applyOrderTax(includedEnv, order);
   assert.equal(cfg.chargesTax, false);
   assert.equal(order.taxes, undefined);
-  assert.equal(order.pricing_options.auto_apply_discounts, true);
+  assert.equal(order.pricing_options.auto_apply_discounts, false);
   assert.equal(order.pricing_options.auto_apply_taxes, false);
   assert.equal(order.service_charges[0].taxable, false);
 });
@@ -78,7 +78,7 @@ test("added mode charges TAX_PERCENT on merchandise and shipping", () => {
   assert.equal(order.taxes.length, 1);
   assert.equal(order.taxes[0].percentage, "6");
   assert.equal(order.taxes[0].scope, "ORDER");
-  assert.equal(order.pricing_options.auto_apply_discounts, true);
+  assert.equal(order.pricing_options.auto_apply_discounts, false);
   assert.equal(order.pricing_options.auto_apply_taxes, false);
   assert.equal(order.service_charges[0].taxable, true);
 
