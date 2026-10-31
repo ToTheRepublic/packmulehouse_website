@@ -171,19 +171,61 @@
     return "USD";
   }
 
-  /** Best volume-style promo from Square catalog list (minItems + percent). */
-  function bestLocalPromo() {
-    const count = cartCount();
-    if (!count) return null;
-    const promos = (discountInfo.promos || [])
+  function volumePromos() {
+    return (discountInfo.promos || [])
       .filter((p) => p.minItems != null && p.percent != null)
       .slice()
       .sort((a, b) => a.minItems - b.minItems);
-    let best = null;
-    for (const p of promos) {
-      if (count >= p.minItems) best = p;
+  }
+
+  /** Cart lines a promo can apply to (all lines when Square gave no scope). */
+  function promoLines(p) {
+    if (!Array.isArray(p.appliesTo)) return cart;
+    const ids = new Set(p.appliesTo);
+    return cart.filter((l) => ids.has(l.variationId));
+  }
+
+  function promoQty(p) {
+    return promoLines(p).reduce((n, l) => n + l.quantity, 0);
+  }
+
+  function promoSubtotal(p) {
+    let total = 0;
+    for (const l of promoLines(p)) {
+      const v = variationsById.get(l.variationId);
+      if (v) total += v.amount * l.quantity;
     }
-    return best;
+    return total;
+  }
+
+  function promoText(p) {
+    return p.label || p.name || `${p.percent}% off ${p.minItems}+ items`;
+  }
+
+  /** Best volume promo from the Square list; Square applies the single best one. */
+  function bestLocalPromo() {
+    if (!cartCount()) return null;
+    let best = null;
+    let bestAmt = 0;
+    for (const p of volumePromos()) {
+      if (promoQty(p) < p.minItems) continue;
+      const amt = Math.round((promoSubtotal(p) * Number(p.percent)) / 100);
+      if (amt > bestAmt) {
+        best = p;
+        bestAmt = amt;
+      }
+    }
+    return best ? { promo: best, amount: bestAmt } : null;
+  }
+
+  /** Friendly label for a discount Square applied (by catalog id). */
+  function labelForApplied(applied, fallback) {
+    const list = Array.isArray(applied) ? applied : [];
+    const names = list.map((a) => {
+      const p = (discountInfo.promos || []).find((x) => x.id === a.catalogObjectId);
+      return p ? promoText(p) : a.name;
+    }).filter(Boolean);
+    return names.length ? [...new Set(names)].join(", ") : fallback;
   }
 
   /**
@@ -206,19 +248,16 @@
         local: true,
       };
     }
-    const promo = bestLocalPromo();
-    const discount = promo
-      ? Math.round((subtotal * Number(promo.percent)) / 100)
-      : 0;
+    const best = bestLocalPromo();
+    const promo = best ? best.promo : null;
+    const discount = best ? best.amount : 0;
     const merch = Math.max(0, subtotal - discount);
     const ship = shippingCents;
     const tax = separateTaxCents(merch, ship);
     return {
       subtotal,
       discount,
-      discountLabel: promo
-        ? promo.name || `${promo.percent}% off ${promo.minItems}+ items`
-        : null,
+      discountLabel: promo ? promoText(promo) : null,
       shipping: ship,
       tax,
       taxLabel: chargesTaxNow() ? taxLabelTextFallback() : null,
@@ -270,7 +309,7 @@
       return {
         subtotal: quote.subtotal,
         discount: quote.discount || 0,
-        discountLabel: quote.discountLabel || null,
+        discountLabel: labelForApplied(quote.appliedDiscounts, quote.discountLabel || null),
         shipping: quote.shipping != null ? quote.shipping : shippingCents,
         tax: chargesTaxNow() ? quote.tax || 0 : 0,
         taxLabel: chargesTaxNow() ? quote.taxLabel || taxLabelTextFallback() : null,
@@ -1090,18 +1129,17 @@
       paySummary.appendChild(banner);
     }
 
-    const count = cartCount();
-    const promos = (discountInfo.promos || [])
-      .filter((p) => p.minItems != null && p.percent != null)
-      .slice()
-      .sort((a, b) => a.minItems - b.minItems);
-    const next = promos.find((p) => p.minItems > count);
+    const next = volumePromos()
+      .filter((p) => promoQty(p) < p.minItems)
+      .filter((p) => !bestLocalPromo() || p.percent > Number(bestLocalPromo().promo.percent))[0];
     if (next) {
-      const need = next.minItems - count;
+      const need = next.minItems - promoQty(next);
       const hint = document.createElement("p");
       hint.className = "field-hint";
       hint.style.marginTop = "0.65rem";
-      hint.textContent = `Add ${need} more item${need === 1 ? "" : "s"} for ${next.percent}% off (Square promo)`;
+      const scope = next.scope && next.scope !== "items" ? next.scope : "items";
+      const noun = need === 1 ? scope.replace(/s$/, "") : scope;
+      hint.textContent = `Add ${need} more ${noun} for ${next.percent}% off`;
       paySummary.appendChild(hint);
     }
   }
@@ -1110,6 +1148,45 @@
     return [...root.querySelectorAll(
       "a[href], button:not([disabled]), input:not([disabled]), select, textarea, iframe, [tabindex]:not([tabindex='-1'])"
     )].filter((el) => !el.closest("[hidden]"));
+  }
+
+  /**
+   * Freeze the page behind the checkout sheet. iOS Safari ignores
+   * overflow:hidden on body, so pin the body with position:fixed at the
+   * current offset and restore the scroll position on close. The sheet
+   * itself keeps its own overflow scrolling.
+   */
+  let scrollLock = null;
+  function lockPageScroll() {
+    if (scrollLock) return;
+    const y = window.scrollY || window.pageYOffset || 0;
+    const b = document.body.style;
+    scrollLock = {
+      y,
+      prev: { position: b.position, top: b.top, left: b.left, right: b.right, width: b.width, overflow: b.overflow },
+      htmlOverflow: document.documentElement.style.overflow,
+    };
+    document.documentElement.style.overflow = "hidden";
+    b.overflow = "hidden";
+    b.position = "fixed";
+    b.top = `-${y}px`;
+    b.left = "0";
+    b.right = "0";
+    b.width = "100%";
+    document.body.classList.add("scroll-locked");
+  }
+  function unlockPageScroll() {
+    if (!scrollLock) return;
+    const { y, prev, htmlOverflow } = scrollLock;
+    scrollLock = null;
+    Object.assign(document.body.style, prev);
+    document.documentElement.style.overflow = htmlOverflow;
+    document.body.classList.remove("scroll-locked");
+    const html = document.documentElement;
+    const prevBehavior = html.style.scrollBehavior;
+    html.style.scrollBehavior = "auto";
+    window.scrollTo(0, y);
+    html.style.scrollBehavior = prevBehavior;
   }
 
   function openModal(step) {
@@ -1123,14 +1200,14 @@
         (closeBtn || modal).focus();
       });
     });
-    document.body.style.overflow = "hidden";
+    lockPageScroll();
     if (step === "pay") showPayStep();
     else showCartStep();
   }
 
   function closeModal() {
     modal.classList.remove("open");
-    document.body.style.overflow = "";
+    unlockPageScroll();
     const returnTo = lastFocus;
     setTimeout(() => {
       modal.hidden = true;
