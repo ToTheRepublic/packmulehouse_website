@@ -107,6 +107,26 @@
       }
     });
 
+    document.getElementById("btn-notify-test").addEventListener("click", async (ev) => {
+      const btn = ev.currentTarget;
+      const out = document.getElementById("notify-status");
+      btn.disabled = true;
+      setMsg(out, "Sending test…", true);
+      try {
+        const data = await api("/api/notify-test", {});
+        const ok = data.channels || [];
+        const failed = data.failed || [];
+        const parts = [];
+        parts.push(ok.length ? `Sent via: ${ok.join(", ")}` : "No channel succeeded");
+        if (failed.length) parts.push(`Failed: ${failed.join(", ")}`);
+        setMsg(out, parts.join(" · "), ok.length > 0 && !failed.length);
+      } catch (e) {
+        setMsg(out, e.message, false);
+      } finally {
+        btn.disabled = false;
+      }
+    });
+
     document.getElementById("btn-logout").addEventListener("click", () => {
       setToken("");
       dash.classList.add("hidden");

@@ -1875,6 +1875,8 @@ async function handleNotifyTest(env) {
     return json({
       ok: true,
       channels: result.results.map((r) => r.channel),
+      // Channel names only; error details stay in the Worker log.
+      failed: [...new Set((result.errors || []).map((e) => String(e).split(":")[0]))],
     });
   } catch (e) {
     console.error("notify test failed", e);
