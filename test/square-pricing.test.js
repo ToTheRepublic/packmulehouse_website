@@ -173,3 +173,26 @@ test("'Starting at' line keeps its space after a pick; placeholder sized per bre
   const loading = html.match(/\.products-status\.is-loading \{[^}]*min-height: (\d+)px/g) || [];
   assert.ok(loading.length >= 4, "min-height at 4 breakpoints");
 });
+
+test("option without its own Square image shows the item's main image, not the last pick", () => {
+  const p = {
+    imageUrl: "https://img/main.jpg",
+    variations: [
+      { id: "A", imageUrl: "https://img/5x7.jpg" },
+      { id: "B", imageUrl: null },
+      { id: "C" },
+    ],
+  };
+  assert.equal(picker.imageFor(p, "A"), "https://img/5x7.jpg");
+  assert.equal(picker.imageFor(p, "B"), "https://img/main.jpg");
+  assert.equal(picker.imageFor(p, "C"), "https://img/main.jpg");
+  assert.equal(picker.imageFor(p, null), "https://img/main.jpg");
+  // Item with no main image: null means the site placeholder.
+  assert.equal(picker.imageFor({ variations: [{ id: "B" }] }, "B"), null);
+  // Adding a variation image later takes over automatically.
+  p.variations[1].imageUrl = "https://img/8x10.jpg";
+  assert.equal(picker.imageFor(p, "B"), "https://img/8x10.jpg");
+  const js = read("checkout.js");
+  assert.match(js, /setCardImage\(picker\.imageFor\(p, v\.id\)\)/);
+  assert.ok(!/if \(v\.imageUrl && imgEl\)/.test(js));
+});

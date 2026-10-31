@@ -79,7 +79,18 @@
     };
   }
 
-  const api = { sellable, pickerLabel, optionLabels, needsPicker, selectedVariation, priceDisplay };
+  /**
+   * Photo for a card: the picked option's own Square image, else the item's
+   * main image, else null (caller shows the site placeholder). Never the
+   * previously picked option's photo.
+   */
+  function imageFor(product, selectedId) {
+    const vars = (product && product.variations) || [];
+    const picked = selectedId ? vars.find((v) => v.id === selectedId) : null;
+    return (picked && picked.imageUrl) || (product && product.imageUrl) || null;
+  }
+
+  const api = { sellable, imageFor, pickerLabel, optionLabels, needsPicker, selectedVariation, priceDisplay };
   root.PMHPicker = api;
   if (typeof module !== "undefined" && module.exports) module.exports = api;
 })(typeof window !== "undefined" ? window : globalThis);

@@ -70,3 +70,13 @@ test("cart and pay summary name the chosen size/pack", () => {
   assert.match(js, /name\.textContent = v\.lineName \|\| v\.productName/);
   assert.match(js, /`\$\{p\.name\} — \$\{v\.name\}`/);
 });
+
+test("on phones the cart toast is dismissed when the sheet opens and never shown over it", () => {
+  const js = read("../public/checkout.js");
+  const html = read("../public/index.html");
+  assert.match(js, /NARROW_MQ = "\(max-width: 899px\)"/);
+  assert.match(js, /function openModal\(step\) \{[\s\S]*?if \(isNarrow\(\)\) hideToastNow\(\);/);
+  assert.match(js, /modal && !modal\.hidden && isNarrow\(\)\) \{\s*hideToastNow\(\);/);
+  assert.match(html, /\.cart-toast\.hush \{[\s\S]*?visibility: hidden;/);
+  assert.match(html, /checkout\.js\?v=26/);
+});

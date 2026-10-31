@@ -352,7 +352,25 @@
     cartBadge.dataset.count = String(n);
   }
 
+  // Phones/tablets: the cart sheet fills the bottom (and much of the screen),
+  // so the toast is never shown over it. 900px+ keeps the at-top toast.
+  const NARROW_MQ = "(max-width: 899px)";
+  function isNarrow() {
+    return !!(window.matchMedia && window.matchMedia(NARROW_MQ).matches);
+  }
+  function hideToastNow() {
+    clearTimeout(toastTimer);
+    toastEl.classList.add("hush");
+    toastEl.classList.remove("show");
+  }
+
   function showToast(message) {
+    toastEl.classList.remove("hush");
+    if (modal && !modal.hidden && isNarrow()) {
+      hideToastNow();
+      announce(message);
+      return;
+    }
     toastEl.textContent = message;
     toastEl.classList.toggle("at-top", !!(modal && !modal.hidden));
     toastEl.classList.add("show");
@@ -695,19 +713,28 @@
       const image = document.createElement("div");
       image.className = "product-image";
       let imgEl = null;
-      if (p.imageUrl) {
-        const img = document.createElement("img");
-        imgEl = img;
-        img.src = p.imageUrl;
-        img.alt = p.name;
-        img.loading = "lazy";
-        image.appendChild(img);
-      } else {
-        const ph = document.createElement("div");
-        ph.className = "product-image-placeholder";
-        ph.textContent = p.name;
-        image.appendChild(ph);
-      }
+      let phEl = null;
+      // Show `url`, or the site placeholder when there is none. Variation
+      // images come from Square; nothing here is per-variation.
+      const setCardImage = (url) => {
+        if (url) {
+          if (!imgEl) {
+            imgEl = document.createElement("img");
+            imgEl.alt = p.name;
+            imgEl.loading = "lazy";
+          }
+          if (imgEl.getAttribute("src") !== url) imgEl.src = url;
+          if (imgEl.parentNode !== image) image.replaceChildren(imgEl);
+        } else {
+          if (!phEl) {
+            phEl = document.createElement("div");
+            phEl.className = "product-image-placeholder";
+            phEl.textContent = p.name;
+          }
+          if (phEl.parentNode !== image) image.replaceChildren(phEl);
+        }
+      };
+      setCardImage(p.imageUrl || null);
 
       const body = document.createElement("div");
       body.className = "product-body";
@@ -770,7 +797,7 @@
           pickerEl.classList.remove("needs-pick");
           renderPrice();
           updateButton();
-          if (v.imageUrl && imgEl) imgEl.src = v.imageUrl;
+          setCardImage(picker.imageFor(p, v.id));
           announce(`${labels.get(v.id)}, ${v.priceLabel}`);
         };
         const vars = picker.sellable(p);
@@ -1131,6 +1158,7 @@
 
   function openModal(step) {
     lastFocus = document.activeElement;
+    if (isNarrow()) hideToastNow();
     modal.hidden = false;
     requestAnimationFrame(() => {
       modal.classList.add("open");
