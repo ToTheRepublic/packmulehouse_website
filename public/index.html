@@ -1142,6 +1142,17 @@
     .cart-toast.at-top.show {
       transform: translateX(-50%) translateY(0);
     }
+    /* Dismissed instantly when the sheet opens on phones. */
+    .cart-toast.hush {
+      visibility: hidden;
+      transition: none;
+    }
+    /* Belt and braces: below 900px never show the toast over the open sheet. */
+    @media (max-width: 899px) {
+      body:has(#checkout-modal:not([hidden])) .cart-toast {
+        visibility: hidden;
+      }
+    }
 
     .cart-lines {
       display: flex;
@@ -1916,8 +1927,8 @@
   <div class="cart-toast" id="cart-toast" role="status" aria-live="polite"></div>
   <div id="cart-announcer" class="sr-only" aria-live="polite"></div>
 
-  <script src="/variant-picker.js?v=1" defer></script>
-  <script src="/checkout.js?v=25" defer></script>
+  <script src="/variant-picker.js?v=2" defer></script>
+  <script src="/checkout.js?v=26" defer></script>
   <script src="/nav.js" defer></script>
   <script src="/youtube.js" defer></script>
   <script src="/promo-video.js" defer></script>
