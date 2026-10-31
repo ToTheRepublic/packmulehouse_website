@@ -44,7 +44,7 @@ import { discordSafe, headerSafe, plainSafe, telegramSafe } from "./sanitize.js"
 import { paymentErrorMessage } from "./payments.js";
 import { applyOrderTax, taxConfigPublic, totalsFromSquareOrder } from "./tax.js";
 import { withAssetType } from "./content-type.js";
-import { buildPromos } from "./promos.js";
+import { packComponents, unitDemand, distributeAllocation } from "./packs.js";
 import { findJsonLdProduct, injectProductOffers, offersFromProduct } from "./jsonld.js";
 import {
   applePayAssociation,
@@ -194,40 +194,6 @@ function htmlTokens(html, env, request) {
     .replaceAll("__CONTACT_EMAIL__", email);
 }
 
-/** List active catalog discounts for display (manage in Square). Cached per request. */
-async function listCatalogDiscounts(env, cache) {
-  if (cache) {
-    if (!cache.discounts) cache.discounts = fetchCatalogDiscounts(env);
-    return cache.discounts;
-  }
-  return fetchCatalogDiscounts(env);
-}
-
-async function fetchCatalogDiscounts(env) {
-  try {
-    const objects = [];
-    let cursor;
-    do {
-      const qs = cursor ? `&cursor=${encodeURIComponent(cursor)}` : "";
-      const data = await squareFetch(
-        env,
-        `/v2/catalog/list?types=DISCOUNT,PRICING_RULE,PRODUCT_SET${qs}`
-      );
-      objects.push(...(data.objects || []));
-      cursor = data.cursor;
-    } while (cursor);
-    let products = null;
-    try {
-      products = (await cachedProducts(env)).products;
-    } catch (e) {
-      console.warn("promo filter: catalog unavailable", e?.message);
-    }
-    return buildPromos(objects, products);
-  } catch (e) {
-    console.warn("listCatalogDiscounts failed", e.message);
-    return { source: "square_catalog", promos: [], summary: "Unavailable" };
-  }
-}
 
 function notifyEmail(env) {
   return (env.MERCHANT_NOTIFY_EMAIL || MERCHANT_NOTIFY_EMAIL).trim();
@@ -366,7 +332,7 @@ async function batchInventoryCounts(env, variationIds) {
 }
 
 /**
- * Catalog line items for full qty so Square pricing rules/discounts apply
+ * Catalog line items for full qty (pricing rules are not auto-applied on the web)
  * (same catalog as POS). MTO units are restored to inventory after payment.
  */
 function buildSquareLineItems(lines) {
@@ -416,6 +382,44 @@ async function restoreMtoInventory(env, lines, orderId) {
     });
   } catch (e) {
     console.error("restoreMtoInventory failed", e.message, e.details);
+  }
+}
+
+/**
+ * Pack variations are not tracked in Square, so Square does not take the kits
+ * inside a pack off the shelf. Move the in-stock component units to SOLD.
+ * (MTO units were never on the shelf, so they are left alone.)
+ */
+async function sellPackComponents(env, lines, orderId) {
+  const now = new Date().toISOString().replace(/\.\d{3}Z$/, ".000Z");
+  const changes = [];
+  for (const l of lines) {
+    for (const c of l.componentAlloc || []) {
+      if (!c.inStock) continue;
+      changes.push({
+        type: "ADJUSTMENT",
+        adjustment: {
+          catalog_object_id: c.variationId,
+          from_state: "IN_STOCK",
+          to_state: "SOLD",
+          quantity: String(c.inStock),
+          location_id: env.SQUARE_LOCATION_ID,
+          occurred_at: now,
+        },
+      });
+    }
+  }
+  if (!changes.length) return;
+  try {
+    await squareFetch(env, "/v2/inventory/changes/batch-create", {
+      method: "POST",
+      body: {
+        idempotency_key: await idempotencyKey(orderId, "pack-components"),
+        changes,
+      },
+    });
+  } catch (e) {
+    console.error("sellPackComponents failed", e.message, e.details);
   }
 }
 
@@ -614,7 +618,6 @@ async function handleConfig(env) {
   const mto = await getMtoState(env);
   const tax = taxConfigPublic(env);
   const cache = createLookupCache();
-  const discounts = await listCatalogDiscounts(env, cache);
   return json({
     applicationId: env.SQUARE_APPLICATION_ID,
     locationId: env.SQUARE_LOCATION_ID,
@@ -624,7 +627,6 @@ async function handleConfig(env) {
     shippingPhrase: flatRateShippingPhrase(ship),
     leadTimes: publicLeadTimes(env),
     tax,
-    discounts,
     lowStockThreshold: lowStockThreshold(env),
     mto: publicMto(mto),
     checkoutEnabled: checkoutEnabled(env),
@@ -651,7 +653,6 @@ async function handleCatalog(env) {
       shippingPhrase: flatRateShippingPhrase(shippingCents(env)),
       leadTimes: publicLeadTimes(env),
       tax: taxConfigPublic(env),
-      discounts: await listCatalogDiscounts(env, cache),
       lowStockThreshold: lowStockThreshold(env),
       mto: publicMto(mto),
     },
@@ -731,9 +732,11 @@ async function resolveVariationLine(env, variationId, quantity, cache) {
     itemName = `${itemName} (${vd.name})`;
   }
 
+  const components = packComponents(vd.sku);
   return {
     variationId,
     quantity: qty,
+    ...(components ? { components } : {}),
     unitAmount: money.amount,
     currency: money.currency || "USD",
     lineTotal: money.amount * qty,
@@ -748,19 +751,38 @@ async function resolveVariationLine(env, variationId, quantity, cache) {
  */
 async function allocateOrderLines(env, lines) {
   const mto = await getMtoState(env);
-  const trackedIds = [...new Set(lines.filter((l) => l.trackInventory).map((l) => l.variationId))];
+  // Packs count as the single kits inside them (see src/packs.js).
+  const demand = unitDemand(lines);
+  const trackedIds = [...new Set(demand.filter((l) => l.trackInventory).map((l) => l.variationId))];
   let counts = new Map();
   if (trackedIds.length) {
     counts = await batchInventoryCounts(env, trackedIds);
   }
   const stockByVariation = {};
-  for (const line of lines) {
+  for (const line of demand) {
     if (!line.trackInventory) stockByVariation[line.variationId] = null;
     else stockByVariation[line.variationId] = counts.has(line.variationId) ? counts.get(line.variationId) : 0;
   }
-  const result = allocateMerged(lines, stockByVariation, mto);
+  const result = allocateMerged(demand, stockByVariation, mto);
   if (result.error) throw publicFail(result.error, result.status || 409);
-  return { lines: result.lines, totalMto: result.totalMto, mto };
+  const perVariation = {};
+  for (const l of result.lines) perVariation[l.variationId] = { inStock: l.inStockQty, mto: l.mtoQty };
+  const merged = mergeSameVariation(lines);
+  const out = distributeAllocation(merged, perVariation).map((l) => ({
+    ...l,
+    lineTotal: l.unitAmount != null ? l.unitAmount * l.quantity : l.lineTotal,
+  }));
+  return { lines: out, totalMto: result.totalMto, mto };
+}
+
+function mergeSameVariation(lines) {
+  const m = new Map();
+  for (const l of lines) {
+    const prev = m.get(l.variationId);
+    if (prev) prev.quantity += l.quantity;
+    else m.set(l.variationId, { ...l });
+  }
+  return [...m.values()];
 }
 
 /**
@@ -1521,6 +1543,7 @@ async function handlePay(request, env) {
     });
     payment = paid.payment;
     await restoreMtoInventory(env, lines, order.id);
+    await sellPackComponents(env, lines, order.id);
   } catch (e) {
     // Log Square's code and detail. The client only gets a mapped sentence.
     console.error("Pay order failed", e.details || e.message);

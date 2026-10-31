@@ -62,14 +62,16 @@ export function checkoutTotalCents({ subtotal = 0, discount = 0, shipping = 0, t
 }
 
 /**
- * Discounts stay on Square pricing rules. Included mode does not add a tax
- * and turns off location tax rules so they are not stacked on shelf prices.
+ * Website orders and quotes never auto-apply Square pricing rules: the site
+ * sells at shelf price (packs carry their own price). The rules stay in Square
+ * for in-person sales. Included mode does not add a tax and turns off
+ * location tax rules so they are not stacked on shelf prices.
  */
 export function applyOrderTax(env, order) {
   const cfg = taxConfigPublic(env);
   order.pricing_options = {
     ...(order.pricing_options || {}),
-    auto_apply_discounts: true,
+    auto_apply_discounts: false,
     auto_apply_taxes: false,
   };
   if (Array.isArray(order.service_charges)) {
