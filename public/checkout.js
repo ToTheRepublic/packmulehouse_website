@@ -1287,8 +1287,42 @@
     }
   }
 
+  /** Full-sheet "Processing your payment…" layer with a spinner. */
+  function showProcessing(text) {
+    const el = document.getElementById("pay-processing");
+    if (!el) return;
+    const t = document.getElementById("pay-processing-text");
+    if (t && text) t.textContent = text;
+    el.hidden = false;
+  }
+  function hideProcessing() {
+    const el = document.getElementById("pay-processing");
+    if (el) el.hidden = true;
+  }
+
+  /**
+   * iOS in-app browsers (WKWebView) can leave the sheet painted blank after the
+   * card iframe and keyboard go away, until the app is backgrounded. Nudge a
+   * repaint without waiting on requestAnimationFrame (paused in some webviews).
+   */
+  function forceRepaint() {
+    const sheet = modal && modal.querySelector(".modal");
+    if (!sheet) return;
+    sheet.scrollTop = 0;
+    sheet.style.transform = "translateZ(0)";
+    void sheet.offsetHeight;
+    setTimeout(() => {
+      sheet.style.transform = "";
+      void sheet.offsetHeight;
+    }, 50);
+  }
+
+  const PAY_TIMEOUT_MS = 45000;
+
   function setPayBusy(busy) {
     payInFlight = busy;
+    if (busy) showProcessing("Processing your payment…");
+    else hideProcessing();
     if (payButton) payButton.disabled = busy;
     const giftBtn = document.getElementById("gift-card-pay");
     if (giftBtn) giftBtn.disabled = busy;
@@ -1573,8 +1607,8 @@
     checkoutSubtitle.textContent = "Keep this reference until your order ships";
     if (confirmMessage) {
       confirmMessage.textContent = data.amountLabel
-        ? `${data.amountLabel} paid. Thank you — your order is in.`
-        : "Thank you — your order is in.";
+        ? `${data.amountLabel} paid. Thank you — your order is in. Your receipt is on its way.`
+        : "Your payment went through. Your receipt is on its way.";
     }
     if (confirmOrder) confirmOrder.textContent = data.orderId || "";
     if (confirmMto) {
@@ -1692,6 +1726,7 @@
       // and then continues. Only cards call it.
       if (methodNeedsBuyerVerification(method) && !attempt.verificationToken) {
         setStatus("Verifying your card…");
+        hideProcessing();
         attempt.verificationToken = await verifyBuyer(
           attempt.sourceId,
           quoted.amount,
@@ -1700,10 +1735,14 @@
       }
 
       setStatus("Processing payment…");
+      showProcessing("Processing your payment…");
       let res;
+      const ctrl = typeof AbortController !== "undefined" ? new AbortController() : null;
+      const timer = ctrl ? setTimeout(() => ctrl.abort(), PAY_TIMEOUT_MS) : null;
       try {
         attempt.submitted = true;
         res = await fetch("/api/pay", {
+          signal: ctrl ? ctrl.signal : undefined,
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -1720,12 +1759,18 @@
         });
       } catch (networkErr) {
         console.error(networkErr);
+        // Payment status unknown: keep the same attempt id so a retry returns
+        // the stored result instead of charging again.
         attempt.networkRetry = true;
         setStatus(
-          "Network error. You can try again — this attempt will not be charged twice.",
+          networkErr && networkErr.name === "AbortError"
+            ? "We couldn’t confirm your payment yet. Don’t start a new order: check your email for a Square receipt, or tap Pay again to check the status. You will not be charged twice."
+            : "Network error. You can try again — this attempt will not be charged twice.",
           "error"
         );
         return;
+      } finally {
+        if (timer) clearTimeout(timer);
       }
 
       const data = await res.json().catch(() => ({}));
@@ -1740,10 +1785,17 @@
 
       cart = [];
       saveCart();
-      renderCartLines();
-      // Drop the card, gift card, and wallet instances. Shipping fields stay.
-      await resetPaymentMethods();
+      // Paid: put the confirmation on screen first, then tear down the card
+      // iframe and wallets in the background (destroy() can stall in iOS
+      // webviews). Never leave the sheet empty.
+      if (document.activeElement && typeof document.activeElement.blur === "function") {
+        document.activeElement.blur();
+      }
       showConfirmation(data, mtoLabels);
+      hideProcessing();
+      forceRepaint();
+      renderCartLines();
+      resetPaymentMethods().catch(() => {}).then(forceRepaint);
 
       try {
         const cat = await fetch("/api/catalog").then((r) => r.json());
