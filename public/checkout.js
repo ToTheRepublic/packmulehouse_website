@@ -971,6 +971,11 @@
       if (cartDiscountLabelEl) cartDiscountLabelEl.textContent = discountLabelText();
       if (cartDiscountEl) cartDiscountEl.textContent = `−${moneyLabel(disc, currency)}`;
     }
+    // Empty cart: no shipping or total rows (nothing to charge yet).
+    const shipRow = cartShippingEl.closest(".modal-summary-row");
+    const totalRow = cartTotalEl.closest(".modal-summary-row");
+    if (shipRow) shipRow.hidden = !cart.length;
+    if (totalRow) totalRow.hidden = !cart.length;
     cartShippingEl.textContent = cart.length
       ? moneyLabel(shippingCents, currency)
       : moneyLabel(0, currency);
