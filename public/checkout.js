@@ -354,6 +354,7 @@
 
   function showToast(message) {
     toastEl.textContent = message;
+    toastEl.classList.toggle("at-top", !!(modal && !modal.hidden));
     toastEl.classList.add("show");
     clearTimeout(toastTimer);
     toastTimer = setTimeout(() => toastEl.classList.remove("show"), 2200);
@@ -395,6 +396,9 @@
           ...v,
           productId: p.id,
           productName: p.name,
+          // "X-Frame Gallery Pack — 4x6 5-Pack" when the product has options.
+          lineName:
+            (p.variations || []).length > 1 && v.name ? `${p.name} — ${v.name}` : p.name,
           lowStock: v.lowStock != null ? v.lowStock : null,
           availability: v.availability || p.availability,
           trackInventory:
@@ -970,7 +974,7 @@
 
       const name = document.createElement("div");
       name.className = "cart-line-name";
-      name.textContent = v.productName;
+      name.textContent = v.lineName || v.productName;
 
       const linePrice = document.createElement("div");
       linePrice.className = "cart-line-price";
@@ -1038,7 +1042,7 @@
     for (const line of cart) {
       const v = variationsById.get(line.variationId);
       if (!v) continue;
-      let label = `${v.productName} × ${line.quantity}`;
+      let label = `${v.lineName || v.productName} × ${line.quantity}`;
       if (v.trackInventory && v.availability === "mto") label += " (made to order)";
       else if (v.trackInventory && v.lowStock != null && line.quantity > v.lowStock) {
         label += ` (${line.quantity - v.lowStock} MTO)`;

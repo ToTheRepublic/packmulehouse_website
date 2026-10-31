@@ -1132,6 +1132,17 @@
       opacity: 1;
     }
 
+    /* While the checkout sheet is open, show the toast at the top so it never
+       covers the sheet's buttons (seen at ~900px wide). */
+    .cart-toast.at-top {
+      top: 0.5rem;
+      bottom: auto;
+      transform: translateX(-50%) translateY(-160%);
+    }
+    .cart-toast.at-top.show {
+      transform: translateX(-50%) translateY(0);
+    }
+
     .cart-lines {
       display: flex;
       flex-direction: column;

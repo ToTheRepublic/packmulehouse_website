@@ -57,3 +57,16 @@ test("checkout shows processing at once and confirmation before teardown", () =>
   assert.match(js, /PAY_TIMEOUT_MS/);
   assert.match(js, /You will not be charged twice/);
 });
+
+test("cart toast moves to the top while the checkout sheet is open", () => {
+  const js = read("../public/checkout.js");
+  const html = read("../public/index.html");
+  assert.match(js, /toastEl\.classList\.toggle\("at-top", !!\(modal && !modal\.hidden\)\)/);
+  assert.match(html, /\.cart-toast\.at-top \{[\s\S]*?top: 0.5rem;[\s\S]*?bottom: auto;/);
+});
+
+test("cart and pay summary name the chosen size/pack", () => {
+  const js = read("../public/checkout.js");
+  assert.match(js, /name\.textContent = v\.lineName \|\| v\.productName/);
+  assert.match(js, /`\$\{p\.name\} — \$\{v\.name\}`/);
+});
