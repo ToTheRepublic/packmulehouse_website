@@ -44,6 +44,7 @@ import { discordSafe, headerSafe, plainSafe, telegramSafe } from "./sanitize.js"
 import { paymentErrorMessage } from "./payments.js";
 import { applyOrderTax, taxConfigPublic, totalsFromSquareOrder } from "./tax.js";
 import { withAssetType } from "./content-type.js";
+import { buildPromos } from "./promos.js";
 import { findJsonLdProduct, injectProductOffers, offersFromProduct } from "./jsonld.js";
 import {
   applePayAssociation,
@@ -204,54 +205,24 @@ async function listCatalogDiscounts(env, cache) {
 
 async function fetchCatalogDiscounts(env) {
   try {
-    const data = await squareFetch(
-      env,
-      "/v2/catalog/list?types=DISCOUNT,PRICING_RULE,PRODUCT_SET"
-    );
-    const objects = data.objects || [];
-    const discounts = new Map();
-    const rules = [];
-    const productSets = new Map();
-    for (const o of objects) {
-      if (o.type === "DISCOUNT" && !o.is_deleted) {
-        discounts.set(o.id, o);
-      } else if (o.type === "PRICING_RULE" && !o.is_deleted) {
-        rules.push(o);
-      } else if (o.type === "PRODUCT_SET" && !o.is_deleted) {
-        productSets.set(o.id, o);
-      }
+    const objects = [];
+    let cursor;
+    do {
+      const qs = cursor ? `&cursor=${encodeURIComponent(cursor)}` : "";
+      const data = await squareFetch(
+        env,
+        `/v2/catalog/list?types=DISCOUNT,PRICING_RULE,PRODUCT_SET${qs}`
+      );
+      objects.push(...(data.objects || []));
+      cursor = data.cursor;
+    } while (cursor);
+    let products = null;
+    try {
+      products = (await cachedProducts(env)).products;
+    } catch (e) {
+      console.warn("promo filter: catalog unavailable", e?.message);
     }
-    const promos = [];
-    for (const rule of rules) {
-      const rd = rule.pricing_rule_data || {};
-      if (rd.application_mode && rd.application_mode !== "AUTOMATIC") continue;
-      const disc = discounts.get(rd.discount_id);
-      if (!disc) continue;
-      const dd = disc.discount_data || {};
-      const pset = productSets.get(rd.match_products_id);
-      const qmin = pset?.product_set_data?.quantity_min;
-      promos.push({
-        id: disc.id,
-        ruleId: rule.id,
-        name: dd.name || rd.name || "Discount",
-        percent: dd.percentage ? Number(dd.percentage) : null,
-        amountMoney: dd.amount_money || null,
-        discountType: dd.discount_type || null,
-        minItems: qmin != null ? Number(qmin) : null,
-        ruleName: rd.name || null,
-      });
-    }
-    promos.sort((a, b) => (a.minItems || 0) - (b.minItems || 0));
-    const summary = promos.length
-      ? promos
-          .map((p) =>
-            p.minItems && p.percent != null
-              ? `${p.minItems}+ items: ${p.percent}% off`
-              : p.name
-          )
-          .join(" · ")
-      : "None (manage in Square Dashboard)";
-    return { source: "square_catalog", promos, summary };
+    return buildPromos(objects, products);
   } catch (e) {
     console.warn("listCatalogDiscounts failed", e.message);
     return { source: "square_catalog", promos: [], summary: "Unavailable" };

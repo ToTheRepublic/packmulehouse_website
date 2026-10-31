@@ -1,0 +1,315 @@
+[
+ {
+  "type": "DISCOUNT",
+  "id": "LEHE6JCE7IAF3CM4XUT33LBD",
+  "is_deleted": false,
+  "discount_data": {
+   "name": "2 for ($5 Off)",
+   "discount_type": "FIXED_AMOUNT",
+   "amount_money": {
+    "amount": 500,
+    "currency": "USD"
+   },
+   "pin_required": false,
+   "application_method": "MANUALLY_APPLIED",
+   "modify_tax_basis": "MODIFY_TAX_BASIS"
+  }
+ },
+ {
+  "type": "DISCOUNT",
+  "id": "HHXA4RG3OMSJAWYKUWFDDOZI",
+  "is_deleted": false,
+  "discount_data": {
+   "name": "2 For ($5 Off)",
+   "discount_type": "FIXED_AMOUNT",
+   "amount_money": {
+    "amount": 500,
+    "currency": "USD"
+   },
+   "pin_required": false,
+   "application_method": "MANUALLY_APPLIED",
+   "modify_tax_basis": "MODIFY_TAX_BASIS"
+  }
+ },
+ {
+  "type": "DISCOUNT",
+  "id": "HCYROHVIRO6UNHFKF2EVJVOK",
+  "is_deleted": false,
+  "discount_data": {
+   "name": "Buy 3 save $1",
+   "discount_type": "FIXED_AMOUNT",
+   "amount_money": {
+    "amount": 100,
+    "currency": "USD"
+   },
+   "application_method": "MANUALLY_APPLIED",
+   "modify_tax_basis": "MODIFY_TAX_BASIS"
+  }
+ },
+ {
+  "type": "DISCOUNT",
+  "id": "Z6FCLMUIWKHLY2BZDTMCTMHV",
+  "is_deleted": false,
+  "discount_data": {
+   "name": "X-Frame",
+   "discount_type": "FIXED_PERCENTAGE",
+   "percentage": "10.0",
+   "application_method": "MANUALLY_APPLIED",
+   "modify_tax_basis": "MODIFY_TAX_BASIS"
+  }
+ },
+ {
+  "type": "DISCOUNT",
+  "id": "CW4LTSLZZGNKAFDDHOCF6IDM",
+  "is_deleted": false,
+  "discount_data": {
+   "name": "X-Frame 20",
+   "discount_type": "FIXED_PERCENTAGE",
+   "percentage": "20.0",
+   "application_method": "MANUALLY_APPLIED",
+   "modify_tax_basis": "MODIFY_TAX_BASIS"
+  }
+ },
+ {
+  "type": "PRICING_RULE",
+  "id": "KH4474I7AKXLPDF473WMPI3F",
+  "is_deleted": false,
+  "pricing_rule_data": {
+   "discount_id": "LEHE6JCE7IAF3CM4XUT33LBD",
+   "match_products_id": "MEEJ34IGKGHQ57SQJR2P6FEV",
+   "exclude_products_id": "SOXOI4WLCFHEHIMWEGIEO523",
+   "exclude_strategy": "MOST_EXPENSIVE",
+   "application_mode": "AUTOMATIC",
+   "discount_target_scope": "LINE_ITEM",
+   "disabled_pricing_sources": [
+    "SQUARE_ONLINE"
+   ]
+  }
+ },
+ {
+  "type": "PRICING_RULE",
+  "id": "K25GKLDGX3HS36C3MQWYR7NK",
+  "is_deleted": false,
+  "pricing_rule_data": {
+   "discount_id": "HHXA4RG3OMSJAWYKUWFDDOZI",
+   "match_products_id": "3D56MVVMQEG4OW7YBUNF4OCR",
+   "exclude_products_id": "ZKVMMLVFNFBWZTXHVXDTE3MY",
+   "exclude_strategy": "MOST_EXPENSIVE",
+   "application_mode": "AUTOMATIC",
+   "discount_target_scope": "LINE_ITEM",
+   "disabled_pricing_sources": [
+    "SQUARE_ONLINE"
+   ]
+  }
+ },
+ {
+  "type": "PRICING_RULE",
+  "id": "VHCWTS6TJHR5K5WT6AAZ65AM",
+  "is_deleted": false,
+  "pricing_rule_data": {
+   "discount_id": "HCYROHVIRO6UNHFKF2EVJVOK",
+   "match_products_id": "SBEOJSVHBXTYUA6JJANC7HAZ",
+   "exclude_products_id": "BCLDTSIC2G6OFADUOV6DE5ET",
+   "exclude_strategy": "MOST_EXPENSIVE",
+   "application_mode": "AUTOMATIC",
+   "discount_target_scope": "LINE_ITEM",
+   "disabled_pricing_sources": [
+    "SQUARE_ONLINE"
+   ]
+  }
+ },
+ {
+  "type": "PRICING_RULE",
+  "id": "MJNANP72L4K7B4WZAGTBSHBH",
+  "is_deleted": false,
+  "pricing_rule_data": {
+   "discount_id": "Z6FCLMUIWKHLY2BZDTMCTMHV",
+   "match_products_id": "DX2BHESECE4YWNVVCEDJUBQO",
+   "application_mode": "AUTOMATIC",
+   "discount_target_scope": "LINE_ITEM"
+  }
+ },
+ {
+  "type": "PRICING_RULE",
+  "id": "XITC7VTX4NH4ODBLHMMZLGNA",
+  "is_deleted": false,
+  "pricing_rule_data": {
+   "discount_id": "CW4LTSLZZGNKAFDDHOCF6IDM",
+   "match_products_id": "63TUAELNK7S6T43W6CV5WNHA",
+   "application_mode": "AUTOMATIC",
+   "discount_target_scope": "LINE_ITEM"
+  }
+ },
+ {
+  "type": "PRODUCT_SET",
+  "id": "SOXOI4WLCFHEHIMWEGIEO523",
+  "is_deleted": false,
+  "product_set_data": {
+   "product_ids_any": [
+    "LJPZYXFQYXZDBGAJ44CIFHNL",
+    "FWVFE7OJY3NZXBIVG7HVM34X"
+   ],
+   "quantity_exact": 1
+  }
+ },
+ {
+  "type": "PRODUCT_SET",
+  "id": "ZKVMMLVFNFBWZTXHVXDTE3MY",
+  "is_deleted": false,
+  "product_set_data": {
+   "product_ids_any": [
+    "V26DGN4HK3YV2KGPKNISZ7JS"
+   ],
+   "quantity_exact": 1
+  }
+ },
+ {
+  "type": "PRODUCT_SET",
+  "id": "A72XAISWYJJXNAOE7AFOUOOE",
+  "is_deleted": false,
+  "product_set_data": {
+   "all_products": true,
+   "match_custom_amounts": true
+  }
+ },
+ {
+  "type": "PRODUCT_SET",
+  "id": "JZ5DDZYTTMXUMBWIXNS6B67L",
+  "is_deleted": false,
+  "product_set_data": {
+   "product_ids_all": [
+    "SOXOI4WLCFHEHIMWEGIEO523",
+    "3SL3NBGOCP6IKHOY57IAEEVH"
+   ],
+   "quantity_exact": 1
+  }
+ },
+ {
+  "type": "PRODUCT_SET",
+  "id": "3SL3NBGOCP6IKHOY57IAEEVH",
+  "is_deleted": false,
+  "product_set_data": {
+   "product_ids_any": [
+    "LT3PCVTMGZVTUGICCSZ24TJZ",
+    "LJPZYXFQYXZDBGAJ44CIFHNL",
+    "FWVFE7OJY3NZXBIVG7HVM34X"
+   ],
+   "quantity_min": 1,
+   "quantity_max": 1
+  }
+ },
+ {
+  "type": "PRODUCT_SET",
+  "id": "MEEJ34IGKGHQ57SQJR2P6FEV",
+  "is_deleted": false,
+  "product_set_data": {
+   "product_ids_all": [
+    "SOXOI4WLCFHEHIMWEGIEO523",
+    "52IFZRRY3CMEC4U6GMN7UUET"
+   ],
+   "quantity_exact": 1
+  }
+ },
+ {
+  "type": "PRODUCT_SET",
+  "id": "52IFZRRY3CMEC4U6GMN7UUET",
+  "is_deleted": false,
+  "product_set_data": {
+   "product_ids_any": [
+    "LJPZYXFQYXZDBGAJ44CIFHNL",
+    "FWVFE7OJY3NZXBIVG7HVM34X"
+   ],
+   "quantity_min": 1,
+   "quantity_max": 1
+  }
+ },
+ {
+  "type": "PRODUCT_SET",
+  "id": "3D56MVVMQEG4OW7YBUNF4OCR",
+  "is_deleted": false,
+  "product_set_data": {
+   "product_ids_all": [
+    "ZKVMMLVFNFBWZTXHVXDTE3MY",
+    "EOUBUJDEKPHTV2JWK6YE2KQC"
+   ],
+   "quantity_exact": 1
+  }
+ },
+ {
+  "type": "PRODUCT_SET",
+  "id": "EOUBUJDEKPHTV2JWK6YE2KQC",
+  "is_deleted": false,
+  "product_set_data": {
+   "product_ids_any": [
+    "V26DGN4HK3YV2KGPKNISZ7JS"
+   ],
+   "quantity_min": 1,
+   "quantity_max": 1
+  }
+ },
+ {
+  "type": "PRODUCT_SET",
+  "id": "BCLDTSIC2G6OFADUOV6DE5ET",
+  "is_deleted": false,
+  "product_set_data": {
+   "product_ids_any": [
+    "XENNLGT642LIO7K5JXXMZOEG"
+   ],
+   "quantity_exact": 2
+  }
+ },
+ {
+  "type": "PRODUCT_SET",
+  "id": "SBEOJSVHBXTYUA6JJANC7HAZ",
+  "is_deleted": false,
+  "product_set_data": {
+   "product_ids_all": [
+    "BCLDTSIC2G6OFADUOV6DE5ET",
+    "KNOKNNWTXH7UVDPNGIEQU7V2"
+   ],
+   "quantity_exact": 1
+  }
+ },
+ {
+  "type": "PRODUCT_SET",
+  "id": "KNOKNNWTXH7UVDPNGIEQU7V2",
+  "is_deleted": false,
+  "product_set_data": {
+   "product_ids_any": [
+    "XENNLGT642LIO7K5JXXMZOEG"
+   ],
+   "quantity_min": 1,
+   "quantity_max": 1
+  }
+ },
+ {
+  "type": "PRODUCT_SET",
+  "id": "DX2BHESECE4YWNVVCEDJUBQO",
+  "is_deleted": false,
+  "product_set_data": {
+   "product_ids_any": [
+    "DESGHCDBJCM6GNRSBBHQKMWY",
+    "AW6DCEW3YXATUM6ZFYTGH4MQ",
+    "7U2KH4UA36JGNLYQOKHO6L5Q",
+    "ZIUUGDSMGYXIWDTEPQQ7CBQ6"
+   ],
+   "quantity_min": 3,
+   "all_products": false
+  }
+ },
+ {
+  "type": "PRODUCT_SET",
+  "id": "63TUAELNK7S6T43W6CV5WNHA",
+  "is_deleted": false,
+  "product_set_data": {
+   "product_ids_any": [
+    "DESGHCDBJCM6GNRSBBHQKMWY",
+    "AW6DCEW3YXATUM6ZFYTGH4MQ",
+    "7U2KH4UA36JGNLYQOKHO6L5Q",
+    "ZIUUGDSMGYXIWDTEPQQ7CBQ6"
+   ],
+   "quantity_min": 5,
+   "all_products": false
+  }
+ }
+]
