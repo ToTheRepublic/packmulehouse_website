@@ -802,6 +802,17 @@ export function ntfyMessage(topic, subject, text) {
   };
 }
 
+/** Notification calls give up after this long so a slow channel can't hang. */
+export const NOTIFY_TIMEOUT_MS = 8000;
+export function notifyFetch(url, init = {}) {
+  const signal =
+    init.signal ||
+    (typeof AbortSignal !== "undefined" && AbortSignal.timeout
+      ? AbortSignal.timeout(NOTIFY_TIMEOUT_MS)
+      : undefined);
+  return fetch(url, signal ? { ...init, signal } : init);
+}
+
 /**
  * One Resend send. Throws with Resend's status and message (e.g. 403
  * "The packmulehouse.com domain is not verified") so the log says why.
@@ -810,7 +821,7 @@ export async function sendResendEmail(env, { to, subject, text, html, replyTo })
   if (!env.RESEND_API_KEY) throw new Error("RESEND_API_KEY is not set");
   const from = String(env.EMAIL_FROM || "").trim();
   if (!from) throw new Error("EMAIL_FROM is not configured");
-  const res = await fetch("https://api.resend.com/emails", {
+  const res = await notifyFetch("https://api.resend.com/emails", {
     method: "POST",
     headers: {
       Authorization: `Bearer ${env.RESEND_API_KEY}`,
@@ -853,7 +864,7 @@ export async function notifyMerchant(env, payload) {
       if (env.NTFY_TOKEN) {
         headers.Authorization = `Bearer ${env.NTFY_TOKEN}`;
       }
-      const res = await fetch(ntfyBase, {
+      const res = await notifyFetch(ntfyBase, {
         method: "POST",
         headers,
         body: JSON.stringify(ntfyMessage(ntfyTopic, subject, text)),
@@ -877,7 +888,7 @@ export async function notifyMerchant(env, payload) {
         description: text.slice(0, 4000),
         color: 0xc4a574,
       };
-      const res = await fetch(env.DISCORD_WEBHOOK_URL, {
+      const res = await notifyFetch(env.DISCORD_WEBHOOK_URL, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -900,7 +911,7 @@ export async function notifyMerchant(env, payload) {
   // --- 2b) Telegram bot ---
   if (env.TELEGRAM_BOT_TOKEN && env.TELEGRAM_CHAT_ID) {
     try {
-      const res = await fetch(
+      const res = await notifyFetch(
         `https://api.telegram.org/bot${env.TELEGRAM_BOT_TOKEN}/sendMessage`,
         {
           method: "POST",
@@ -951,7 +962,7 @@ export async function notifyMerchant(env, payload) {
       if (!siteOrigin) {
         throw new Error("SITE_ORIGIN is not configured");
       }
-      const res = await fetch(
+      const res = await notifyFetch(
         `https://formsubmit.co/ajax/${encodeURIComponent(to)}`,
         {
           method: "POST",
@@ -1401,7 +1412,7 @@ async function handleQuote(request, env) {
   }
 }
 
-async function handlePay(request, env) {
+async function handlePay(request, env, ctx) {
   if (request.method !== "POST") {
     return error("Method not allowed", 405);
   }
@@ -1619,37 +1630,12 @@ async function handlePay(request, env) {
     notified: false,
   };
 
-  try {
-    const mail = buildOrderEmail({
-      lines,
-      shipping,
-      subtotal,
-      discount: discountCollected,
-      discountLabel: payload.discountLabel,
-      tax: taxCollected,
-      taxLabel: taxCfg.chargesTax ? `${taxCfg.name} (${taxCfg.label})` : null,
-      taxIncluded: taxCfg.included,
-      taxNote: taxCfg.note || null,
-      total: orderTotal,
-      currency: payload.currency,
-      shippingInfo,
-      orderId: order.id,
-      paymentId: payment?.id,
-      environment: env.SQUARE_ENVIRONMENT || "sandbox",
-      totalMto: allocation.totalMto,
-      mtoRemainingAfter: mtoAfter?.remaining ?? allocation.mto?.remaining,
-      mtoPromiseText: mtoPromise(env),
-    });
-    const notifyResult = await notifyMerchant(env, mail);
-    payload.notified = (notifyResult?.results || []).length > 0;
-  } catch (e) {
-    console.error(`Merchant notify failed: ${e?.message || e}`);
-  }
-
-  try {
-    const receipt = await sendCustomerReceipt(
-      env,
-      buildCustomerReceipt({
+  // The payment is done. Merchant alerts and the buyer receipt run after the
+  // response (ctx.waitUntil) so a slow or failing channel never delays the
+  // confirmation screen. Each channel also has its own timeout (notifyFetch).
+  const runNotifications = async () => {
+    try {
+      const mail = buildOrderEmail({
         lines,
         shipping,
         subtotal,
@@ -1663,13 +1649,49 @@ async function handlePay(request, env) {
         currency: payload.currency,
         shippingInfo,
         orderId: order.id,
-        promise: mtoPromise(env),
-        contactEmail: notifyEmail(env),
-      })
-    );
-    payload.receiptSent = !!receipt.ok;
-  } catch (e) {
-    console.error(`Customer receipt failed: ${e?.message || e}`);
+        paymentId: payment?.id,
+        environment: env.SQUARE_ENVIRONMENT || "sandbox",
+        totalMto: allocation.totalMto,
+        mtoRemainingAfter: mtoAfter?.remaining ?? allocation.mto?.remaining,
+        mtoPromiseText: mtoPromise(env),
+      });
+      const notifyResult = await notifyMerchant(env, mail);
+      payload.notified = (notifyResult?.results || []).length > 0;
+    } catch (e) {
+      console.error(`Merchant notify failed: ${e?.message || e}`);
+    }
+
+    try {
+      const receipt = await sendCustomerReceipt(
+        env,
+        buildCustomerReceipt({
+          lines,
+          shipping,
+          subtotal,
+          discount: discountCollected,
+          discountLabel: payload.discountLabel,
+          tax: taxCollected,
+          taxLabel: taxCfg.chargesTax ? `${taxCfg.name} (${taxCfg.label})` : null,
+          taxIncluded: taxCfg.included,
+          taxNote: taxCfg.note || null,
+          total: orderTotal,
+          currency: payload.currency,
+          shippingInfo,
+          orderId: order.id,
+          promise: mtoPromise(env),
+          contactEmail: notifyEmail(env),
+        })
+      );
+      payload.receiptSent = !!receipt.ok;
+    } catch (e) {
+      console.error(`Customer receipt failed: ${e?.message || e}`);
+    }
+  };
+  if (ctx && typeof ctx.waitUntil === "function") {
+    payload.notified = "queued";
+    ctx.waitUntil(runNotifications());
+  } else {
+    await runNotifications();
   }
 
   try {
@@ -1916,7 +1938,7 @@ function sitemapXml() {
   return `<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n${urls}\n</urlset>\n`;
 }
 
-async function route(request, env, url) {
+async function route(request, env, url, ctx) {
   const adminHost = isAdminHost(url.hostname);
 
   if (url.pathname === "/robots.txt") {
@@ -1980,7 +2002,7 @@ async function route(request, env, url) {
     return error(CHECKOUT_OFF_MESSAGE, 503);
   }
   if (url.pathname === "/api/pay") {
-    return handlePay(request, env);
+    return handlePay(request, env, ctx);
   }
   if (url.pathname === "/api/quote" && request.method === "POST") {
     return handleQuote(request, env);
@@ -2008,11 +2030,11 @@ async function route(request, env, url) {
 }
 
 export default {
-  async fetch(request, env) {
+  async fetch(request, env, ctx) {
     const url = new URL(request.url);
     let response;
     try {
-      response = await route(request, env, url);
+      response = await route(request, env, url, ctx);
     } catch (e) {
       console.error(e);
       response = e?.publicMessage

@@ -797,6 +797,38 @@
     }
 
     /* ========== CHECKOUT MODAL ========== */
+    /* Shown from the moment Pay is pressed until the result is on screen. */
+    .pay-processing {
+      position: fixed;
+      inset: 0;
+      z-index: 210;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: rgba(0, 0, 0, 0.55);
+    }
+    .pay-processing[hidden] { display: none; }
+    .pay-processing-card {
+      background: var(--bg-elevated);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-lg);
+      padding: 1.5rem 1.75rem;
+      text-align: center;
+      max-width: 280px;
+    }
+    .pay-processing-card p { margin: 0.75rem 0 0; }
+    .spinner {
+      display: inline-block;
+      width: 32px;
+      height: 32px;
+      border: 3px solid rgba(255, 255, 255, 0.2);
+      border-top-color: currentColor;
+      border-radius: 50%;
+      animation: pmh-spin 0.8s linear infinite;
+    }
+    @keyframes pmh-spin { to { transform: rotate(360deg); } }
+    @media (prefers-reduced-motion: reduce) { .spinner { animation-duration: 2.4s; } }
+
     .modal-overlay {
       position: fixed;
       inset: 0;
@@ -1098,6 +1130,17 @@
     .cart-toast.show {
       transform: translateX(-50%) translateY(0);
       opacity: 1;
+    }
+
+    /* While the checkout sheet is open, show the toast at the top so it never
+       covers the sheet's buttons (seen at ~900px wide). */
+    .cart-toast.at-top {
+      top: 0.5rem;
+      bottom: auto;
+      transform: translateX(-50%) translateY(-160%);
+    }
+    .cart-toast.at-top.show {
+      transform: translateX(-50%) translateY(0);
     }
 
     .cart-lines {
@@ -1735,6 +1778,13 @@
   <!-- CART + CHECKOUT MODAL (left out by the server when checkout is off) -->
   <!--@checkout-->
   <div class="modal-overlay" id="checkout-modal" role="dialog" aria-modal="true" aria-labelledby="checkout-title" tabindex="-1" hidden>
+    <div class="pay-processing" id="pay-processing" role="status" aria-live="assertive" hidden>
+      <div class="pay-processing-card">
+        <span class="spinner" aria-hidden="true"></span>
+        <p id="pay-processing-text">Processing your payment…</p>
+        <p class="field-hint">Please keep this page open.</p>
+      </div>
+    </div>
     <div class="modal wide">
       <div class="modal-header">
         <div>
@@ -1867,7 +1917,7 @@
   <div id="cart-announcer" class="sr-only" aria-live="polite"></div>
 
   <script src="/variant-picker.js?v=1" defer></script>
-  <script src="/checkout.js?v=24" defer></script>
+  <script src="/checkout.js?v=25" defer></script>
   <script src="/nav.js" defer></script>
   <script src="/youtube.js" defer></script>
   <script src="/promo-video.js" defer></script>
