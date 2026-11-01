@@ -20,7 +20,8 @@ test("homepage hero shows the X-Frame hero video with poster and reduced-motion 
   const html = fs.readFileSync(new URL("../public/index.html", import.meta.url), "utf8");
   const hero = html.slice(html.indexOf('<section class="hero">'), html.indexOf("<!-- VIDEO -->"));
   const tag = hero.match(/<video id="hero-video-player"[^>]*>/)[0];
-  for (const a of ["autoplay", "muted", "loop", "playsinline", 'preload="metadata"', 'poster="/xframe-hero-poster.jpg"', "aria-label="]) assert.ok(tag.includes(a), a);
+  assert.ok(!/\bloop\b/.test(tag), "hero must not loop");
+  for (const a of ["autoplay", "muted", "playsinline", 'preload="metadata"', 'poster="/xframe-hero-poster.jpg"', "aria-label="]) assert.ok(tag.includes(a), a);
   assert.ok(hero.indexOf("xframe-hero.webm") < hero.indexOf("xframe-hero.mp4"));
   assert.match(hero, /Shop X-Frame/);
   const js = fs.readFileSync(new URL("../public/promo-video.js", import.meta.url), "utf8");

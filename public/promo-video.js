@@ -15,3 +15,21 @@
   apply();
   if (mq.addEventListener) mq.addEventListener("change", apply);
 });
+
+// Hero video plays once and holds its last frame until reload.
+(function () {
+  var v = document.getElementById("hero-video-player");
+  if (!v) return;
+  v.loop = false;
+  function hold() {
+    v.pause();
+    v.controls = false;
+    if (isFinite(v.duration) && v.duration > 0.1) {
+      try { v.currentTime = v.duration - 0.05; } catch (e) {}
+    }
+  }
+  v.addEventListener("timeupdate", function () {
+    if (isFinite(v.duration) && v.currentTime >= v.duration - 0.08) hold();
+  });
+  v.addEventListener("ended", hold);
+})();
