@@ -248,7 +248,7 @@
       margin: 0 auto;
       padding: 4.5rem 1.5rem 3.5rem;
       display: grid;
-      grid-template-columns: 1.1fr 0.9fr;
+      grid-template-columns: 1fr 1.1fr;
       gap: 3.5rem;
       align-items: center;
     }
@@ -1479,6 +1479,17 @@
 
 
 
+    .hero-video {
+      display: block;
+      width: 100%;
+      max-width: 100%;
+      height: auto;
+      aspect-ratio: 16 / 9;
+      object-fit: cover;
+      border-radius: var(--radius-lg);
+      background: #111;
+    }
+
     /* ========== RESPONSIVE ========== */
     @media (max-width: 860px) {
       .hero {
@@ -1503,6 +1514,11 @@
       .hero-visual picture,
       .hero-logo {
         max-width: 280px;
+      }
+
+      .hero-video {
+        max-width: 640px;
+        margin: 0 auto;
       }
 
       .benefits-grid {
@@ -1614,6 +1630,7 @@
   ]
 }
   </script>
+  <link rel="preload" as="image" href="/xframe-hero-poster.jpg" fetchpriority="high" />
 </head>
 <body>
 
@@ -1662,10 +1679,11 @@
       </div>
     </div>
     <div class="hero-visual">
-      <picture>
-        <source type="image/webp" srcset="logo-420.webp 420w, logo-840.webp 840w" sizes="(max-width: 860px) 280px, 420px" />
-        <img src="logo-840.png" srcset="logo-420.png 420w, logo-840.png 840w" sizes="(max-width: 860px) 280px, 420px" width="3652" height="3500" alt="Pack Mule House logo" class="hero-logo" />
-      </picture>
+      <video id="hero-video-player" class="hero-video" autoplay muted loop playsinline preload="metadata" poster="/xframe-hero-poster.jpg" width="1280" height="720" aria-label="X-Frame wall mount animation" aria-describedby="hero-video-desc">
+        <source src="/xframe-hero.webm" type="video/webm" />
+        <source src="/xframe-hero.mp4" type="video/mp4" />
+      </video>
+      <p id="hero-video-desc" hidden>Silent looping animation: items fly in and click onto the X-Frame magnetic wall mount, ending on a pull-back to a LOVE metal plate hung on the wall.</p>
     </div>
   </section>
 

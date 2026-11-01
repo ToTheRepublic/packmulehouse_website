@@ -15,3 +15,15 @@ test("homepage has the self-hosted promo video above Why X-Frame", () => {
   assert.match(html, /<script src="\/promo-video\.js" defer><\/script>/);
   for (const f of ["xframe-promo.mp4", "xframe-promo.webm", "xframe-promo-poster.jpg", "promo-video.js"]) assert.ok(fs.existsSync(new URL(`../public/${f}`, import.meta.url)), f);
 });
+
+test("homepage hero shows the X-Frame hero video with poster and reduced-motion handling", () => {
+  const html = fs.readFileSync(new URL("../public/index.html", import.meta.url), "utf8");
+  const hero = html.slice(html.indexOf('<section class="hero">'), html.indexOf("<!-- VIDEO -->"));
+  const tag = hero.match(/<video id="hero-video-player"[^>]*>/)[0];
+  for (const a of ["autoplay", "muted", "loop", "playsinline", 'preload="metadata"', 'poster="/xframe-hero-poster.jpg"', "aria-label="]) assert.ok(tag.includes(a), a);
+  assert.ok(hero.indexOf("xframe-hero.webm") < hero.indexOf("xframe-hero.mp4"));
+  assert.match(hero, /Shop X-Frame/);
+  const js = fs.readFileSync(new URL("../public/promo-video.js", import.meta.url), "utf8");
+  assert.match(js, /hero-video-player/);
+  for (const f of ["xframe-hero.mp4", "xframe-hero.webm", "xframe-hero-poster.jpg"]) assert.ok(fs.existsSync(new URL(`../public/${f}`, import.meta.url)), f);
+});
