@@ -1,0 +1,195 @@
+/* How It Works page. Uses the same tokens as policy.css / the homepage. */
+.howto {
+  --max-width: 1120px;
+  max-width: var(--max-width);
+  margin: 0 auto;
+  padding: 1.75rem 1.5rem 4rem;
+}
+
+.howto-intro {
+  max-width: 42rem;
+  margin: 0 0 1.75rem;
+}
+
+.howto-intro h1 {
+  margin: 0 0 0.6rem;
+}
+
+.howto-intro .lede {
+  font-size: 1.15rem;
+  color: var(--text);
+  margin: 0 0 0.75rem;
+}
+
+.howto-intro p {
+  margin: 0;
+}
+
+.howto-video {
+  margin: 0 0 3rem;
+}
+
+.howto-video video {
+  display: block;
+  width: 100%;
+  height: auto;
+  aspect-ratio: 16 / 9;
+  object-fit: cover;
+  border-radius: 20px;
+  background: #000;
+  border: 1px solid var(--border);
+  box-shadow: 0 20px 40px -15px rgba(0, 0, 0, 0.5);
+}
+
+.howto-steps {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2.5rem;
+}
+
+.howto-step {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 1.25rem;
+  align-items: center;
+}
+
+.howto-step-copy {
+  min-width: 0;
+}
+
+.howto-kicker {
+  font-size: 0.8rem;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--tan);
+  margin: 0 0 0.35rem;
+}
+
+.howto-step h2,
+.howto-extra h2 {
+  font-family: "Space Grotesk", sans-serif;
+  font-size: clamp(1.35rem, 3vw, 1.75rem);
+  font-weight: 600;
+  letter-spacing: -0.03em;
+  color: var(--text);
+  margin: 0 0 0.6rem;
+}
+
+.howto-step p,
+.howto-extra p {
+  margin: 0 0 0.75rem;
+}
+
+.howto-step p:last-child,
+.howto-extra p:last-child {
+  margin-bottom: 0;
+}
+
+.howto-media {
+  display: grid;
+  gap: 0.85rem;
+}
+
+.howto-media.pair {
+  grid-template-columns: 1fr;
+}
+
+.howto-media figure {
+  margin: 0;
+}
+
+.howto-media img {
+  display: block;
+  width: 100%;
+  height: auto;
+  aspect-ratio: 16 / 9;
+  object-fit: cover;
+  border-radius: 16px;
+  border: 1px solid var(--border);
+  background: #1c1c1c;
+}
+
+.howto-media figcaption {
+  margin-top: 0.45rem;
+  font-size: 0.85rem;
+  color: var(--text-dim);
+}
+
+.howto-extra {
+  margin-top: 3rem;
+  padding-top: 2.5rem;
+  border-top: 1px solid var(--border);
+  display: grid;
+  gap: 2.5rem;
+}
+
+.howto-extra-item {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 1.25rem;
+  align-items: center;
+}
+
+.howto-cta {
+  margin-top: 3rem;
+  padding: 2rem 0 0;
+  border-top: 1px solid var(--border);
+}
+
+.howto-cta p {
+  margin: 0 0 1.1rem;
+  max-width: 42rem;
+}
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.4rem;
+  padding: 0.7rem 1.35rem;
+  border-radius: 999px;
+  font-weight: 600;
+  font-size: 0.95rem;
+  text-decoration: none;
+  transition: all 0.2s ease;
+  border: none;
+  cursor: pointer;
+}
+
+.btn-primary {
+  background: var(--tan);
+  color: #1a140c;
+}
+
+.btn-primary:hover {
+  background: #d4b484;
+  color: #1a140c;
+  transform: translateY(-1px);
+}
+
+@media (min-width: 800px) {
+  .howto-step,
+  .howto-extra-item {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1.15fr);
+    gap: 2rem;
+  }
+
+  .howto-step:nth-child(even),
+  .howto-extra-item:nth-child(even) {
+    grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr);
+  }
+
+  .howto-step:nth-child(even) .howto-step-copy,
+  .howto-extra-item:nth-child(even) .howto-extra-copy {
+    order: 2;
+  }
+
+  .howto-media.pair {
+    grid-template-columns: 1fr 1fr;
+  }
+}

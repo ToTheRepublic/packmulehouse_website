@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 
-const PAGES = ["index", "quote", "contact", "shipping", "returns", "privacy", "terms"];
+const PAGES = ["index", "quote", "contact", "shipping", "returns", "privacy", "terms", "how-it-works"];
 const read = (f) => fs.readFileSync(new URL(`../public/${f}.html`, import.meta.url), "utf8");
 const header = (html) => html.match(/<header class="header">[\s\S]*?<\/header>/)?.[0];
 const footer = (html) => html.match(/<footer class="footer">[\s\S]*?<\/footer>/)?.[0];

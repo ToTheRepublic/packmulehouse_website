@@ -1434,6 +1434,44 @@
     }
     .quote-link a { color: var(--tan, #c4a574); text-decoration: underline; text-underline-offset: 3px; }
 
+    .products-howto {
+      margin: 2.75rem 0 0;
+      padding-top: 2.25rem;
+      border-top: 1px solid var(--border);
+    }
+
+    .products-howto h3 {
+      font-family: 'Space Grotesk', sans-serif;
+      font-size: 1.5rem;
+      font-weight: 600;
+      margin: 0 0 0.5rem;
+    }
+
+    .products-howto p {
+      color: var(--text-muted);
+      margin: 0 0 1.25rem;
+      max-width: 48rem;
+    }
+
+    .products-howto a {
+      color: var(--tan);
+      text-decoration: underline;
+      text-underline-offset: 3px;
+    }
+
+    .products-howto video {
+      display: block;
+      width: 100%;
+      max-width: 900px;
+      height: auto;
+      aspect-ratio: 16 / 9;
+      object-fit: cover;
+      border-radius: var(--radius-lg);
+      background: #000;
+      border: 1px solid var(--border);
+      box-shadow: 0 20px 40px -15px rgba(0, 0, 0, 0.5);
+    }
+
 
 
 
@@ -1651,7 +1689,7 @@
         </button>
         <nav class="nav" id="site-nav" aria-label="Main">
           <a href="#products">Shop</a>
-          <a href="#how-it-works">How it Works</a>
+          <a href="/how-it-works">How it Works</a>
           <a href="#about">About</a>
           <a href="/quote">Instant Quote</a>
         </nav>
@@ -1721,6 +1759,14 @@
       </div>
     </div>
     <p class="quote-link"><a href="/quote">Have your own model? Get an instant quote</a></p>
+    <div class="products-howto">
+      <h3>How to hang X-Frame</h3>
+      <p>Watch the short how-to, including a no-drill Command strip option, or <a href="/how-it-works">read the steps</a>.</p>
+      <video id="products-howto-player" controls playsinline preload="metadata" poster="/xframe-howto-poster.jpg" width="1280" height="720" aria-label="How to hang X-Frame from Pack Mule House">
+        <source src="/xframe-howto.webm" type="video/webm" />
+        <source src="/xframe-howto.mp4" type="video/mp4" />
+      </video>
+    </div>
   </section>
 
   <!-- PROMO VIDEO (silent loop) -->
@@ -1792,6 +1838,7 @@
       </div>
       <div class="footer-links">
         <a href="/#products">Shop</a>
+        <a href="/how-it-works">How it Works</a>
         <a href="/shipping">Shipping</a>
         <a href="/returns">Returns</a>
         <a href="/privacy">Privacy</a>
