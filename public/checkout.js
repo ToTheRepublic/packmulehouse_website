@@ -668,9 +668,17 @@
         h2.id = `shop-category-${index}`;
         h2.textContent = section.name || "";
         block.setAttribute("aria-labelledby", h2.id);
+        if (section.name === "Gallery Packs") block.id = "gallery-packs";
         const gridEl = document.createElement("div");
         gridEl.className = "product-grid";
-        block.append(h2, gridEl);
+        block.append(h2);
+        if (section.intro) {
+          const intro = document.createElement("p");
+          intro.className = "product-section-intro";
+          intro.textContent = section.intro;
+          block.append(intro);
+        }
+        block.append(gridEl);
         mount.appendChild(block);
         fillProductGrid(gridEl, section.products || []);
       });
@@ -708,7 +716,7 @@
       const unavailable = p.availability === "unavailable" || (p.maxQty || 0) <= 0;
 
       const article = document.createElement("article");
-      article.className = "product-card";
+      article.className = "product-card" + (p.isPack ? " pack-card" : "");
 
       const image = document.createElement("div");
       image.className = "product-image";
@@ -773,6 +781,12 @@
         priceMain.append(d.label);
       };
       renderPrice();
+      if (p.savingsLabel) {
+        const save = document.createElement("span");
+        save.className = "pack-savings";
+        save.textContent = p.savingsLabel;
+        price.appendChild(save);
+      }
 
       let pickerEl = null;
       if (picker && picker.needsPicker(p)) {

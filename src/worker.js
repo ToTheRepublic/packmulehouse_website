@@ -44,7 +44,7 @@ import { discordSafe, headerSafe, plainSafe, telegramSafe } from "./sanitize.js"
 import { paymentErrorMessage } from "./payments.js";
 import { applyOrderTax, taxConfigPublic, totalsFromSquareOrder } from "./tax.js";
 import { withAssetType } from "./content-type.js";
-import { packComponents, unitDemand, distributeAllocation } from "./packs.js";
+import { packComponents, unitDemand, distributeAllocation, annotateGalleryPacks, featureGalleryPacks } from "./packs.js";
 import { findJsonLdProduct, injectProductOffers, offersFromProduct } from "./jsonld.js";
 import {
   applePayAssociation,
@@ -523,6 +523,7 @@ function mapCatalogToProducts(objects, inventoryMap, env, mto) {
   const filter = catalogFilterFromEnv(env);
   const threshold = lowStockThreshold(env);
   const products = [];
+  const skuByVariationId = new Map();
   for (const o of objects) {
     if (o.type !== "ITEM" || o.is_deleted) continue;
     const item = o.item_data;
@@ -571,6 +572,7 @@ function mapCatalogToProducts(objects, inventoryMap, env, mto) {
         leadTimeWeeks: weeks,
         leadTimeLabel: mtoLabel,
       });
+      if (vd.sku) skuByVariationId.set(v.id, vd.sku);
     }
     if (!variations.length) continue;
 
@@ -602,6 +604,7 @@ function mapCatalogToProducts(objects, inventoryMap, env, mto) {
   }
 
   products.sort((a, b) => a.name.localeCompare(b.name));
+  annotateGalleryPacks(products, skuByVariationId);
   return products;
 }
 
@@ -641,7 +644,10 @@ async function handleCatalog(env) {
   // No stock counts on the storefront until checkout is on.
   const products = checkoutEnabled(env) ? mapped : withoutStockSignals(mapped);
   const filter = catalogFilterFromEnv(env);
-  const sections = productSections(products, filter.groups);
+  const sections = featureGalleryPacks(
+    productSections(products, filter.groups),
+    products
+  );
 
   return json(
     {
