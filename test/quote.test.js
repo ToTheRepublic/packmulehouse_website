@@ -22,7 +22,7 @@ test("quote page embeds the Sliceworth widget with a noscript fallback", () => {
 });
 
 test("every page links to /quote and carries the footer note", () => {
-  for (const f of ["index", "contact", "privacy", "returns", "shipping", "terms", "quote"]) {
+  for (const f of ["index", "contact", "privacy", "returns", "shipping", "terms", "quote", "how-it-works"]) {
     const html = fs.readFileSync(new URL(`../public/${f}.html`, import.meta.url), "utf8");
     assert.match(html, /href="\/quote"/, f);
     assert.match(html, /Run a print shop\? Get instant quotes on your site/, f);

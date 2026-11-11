@@ -1931,7 +1931,7 @@ async function handleNotifyTest(env) {
 
 // Search engines index the apex domain only, so the sitemap always lists it.
 const SITEMAP_ORIGIN = "https://packmulehouse.com";
-const SITEMAP_PATHS = ["/", "/quote", "/shipping", "/returns", "/privacy", "/terms", "/contact"];
+const SITEMAP_PATHS = ["/", "/how-it-works", "/quote", "/shipping", "/returns", "/privacy", "/terms", "/contact"];
 
 function sitemapXml() {
   const urls = SITEMAP_PATHS.map((p) => `  <url><loc>${SITEMAP_ORIGIN}${p}</loc></url>`).join("\n");
