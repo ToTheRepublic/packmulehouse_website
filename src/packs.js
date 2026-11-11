@@ -122,6 +122,7 @@ export function packContentsByVariation(description, variationNames) {
     let text = desc.slice(hits[i].bodyStart, end).trim();
     text = text.replace(/^[,;\s]+/, "").replace(/[\s.]+$/g, "").trim();
     if (!text) continue;
+    text = text.charAt(0).toUpperCase() + text.slice(1);
     out[hits[i].name] = /[.!?]$/.test(text) ? text : `${text}.`;
   }
   return out;

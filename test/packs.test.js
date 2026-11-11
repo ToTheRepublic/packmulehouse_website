@@ -127,11 +127,11 @@ const SKUS = {
 
 test("pack contents are taken from the Square item description, never invented", () => {
   const byName = packContentsByVariation(PACK_DESCRIPTION, PACK_NAMES);
-  assert.equal(byName["4x6 5-Pack"], "five 4x6 Drop In kits.");
-  assert.equal(byName["5x7 5-Pack"], "five 5x7 Drop In kits.");
-  assert.equal(byName["8x10 5-Pack"], "five 8x10 Drop In kits.");
-  assert.equal(byName["Peel and Stick 5-Pack"], "five Peel and Stick kits for frames you already own.");
-  assert.equal(byName["Mixed Gallery Wall 5-Pack"], "two 4x6, two 5x7 and one 8x10 Drop In kit.");
+  assert.equal(byName["4x6 5-Pack"], "Five 4x6 Drop In kits.");
+  assert.equal(byName["5x7 5-Pack"], "Five 5x7 Drop In kits.");
+  assert.equal(byName["8x10 5-Pack"], "Five 8x10 Drop In kits.");
+  assert.equal(byName["Peel and Stick 5-Pack"], "Five Peel and Stick kits for frames you already own.");
+  assert.equal(byName["Mixed Gallery Wall 5-Pack"], "Two 4x6, two 5x7 and one 8x10 Drop In kit.");
   assert.deepEqual(packContentsByVariation("", PACK_NAMES), {});
   assert.deepEqual(packContentsByVariation("A pack of kits.", PACK_NAMES), {});
   assert.equal(
@@ -168,7 +168,7 @@ test("featureGalleryPacks lifts pack variations into a section after X-Frames", 
   annotateGalleryPacks(products, SKUS);
   const packItem = products.find((p) => p.id === "UNFNDN4ZTUNZYOGAG7DJDN44");
   assert.equal(packItem.variations.every((v) => v.isPack), true);
-  assert.equal(packItem.variations[0].contents, "five 4x6 Drop In kits.");
+  assert.equal(packItem.variations[0].contents, "Five 4x6 Drop In kits.");
   assert.equal(packItem.variations[0].savingsCents, 1500);
   assert.equal(packItem.variations[4].savingsCents, 1900);
   assert.equal(packItem.variations[2].savingsCents, 2500);
@@ -204,7 +204,7 @@ test("featureGalleryPacks lifts pack variations into a section after X-Frames", 
   assert.equal(mix.defaultVariationId, "PMIX");
   assert.equal(mix.variations.length, 1);
   assert.equal(mix.amount, 10900);
-  assert.equal(mix.contents, "two 4x6, two 5x7 and one 8x10 Drop In kit.");
+  assert.equal(mix.contents, "Two 4x6, two 5x7 and one 8x10 Drop In kit.");
   assert.equal(mix.savingsLabel, "Save $19.00 ($3.80 per kit) versus buying the kits separately");
   assert.equal(mix.imageUrl, "https://example.com/item.jpg");
   assert.equal(packSection.products[0].imageUrl, "https://example.com/4x6.jpg");
