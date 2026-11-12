@@ -23,3 +23,18 @@ test("admin console has a test-notification button wired to /api/notify-test", (
   assert.match(html, /id="btn-notify-test"/);
   assert.match(js, /api\("\/api\/notify-test"/);
 });
+
+test("homepage renders a Gallery Packs section with contents and verified savings", () => {
+  const js = fs.readFileSync(new URL("../public/checkout.js", import.meta.url), "utf8");
+  const html = fs.readFileSync(new URL("../public/index.html", import.meta.url), "utf8");
+  assert.match(js, /if \(section\.name === "Gallery Packs"\) block\.id = "gallery-packs"/);
+  assert.match(js, /intro\.className = "product-section-intro"/);
+  assert.match(js, /intro\.textContent = section\.intro/);
+  assert.match(js, /save\.className = "pack-savings"/);
+  assert.match(js, /save\.textContent = p\.savingsLabel/);
+  assert.match(js, /p\.isPack \? " pack-card" : ""/);
+  assert.equal(/10%\s*off/i.test(js), false);
+  assert.equal(/20%\s*off/i.test(js), false);
+  assert.match(html, /\.product-section-intro/);
+  assert.match(html, /\.pack-savings/);
+});

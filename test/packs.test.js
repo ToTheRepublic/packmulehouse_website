@@ -1,6 +1,15 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { packComponents, unitDemand, distributeAllocation, PACK_COMPONENTS_BY_SKU } from "../src/packs.js";
+import { packComponents, unitDemand, distributeAllocation, PACK_COMPONENTS_BY_SKU,
+  packContentsByVariation,
+  packIntroFromDescription,
+  contentsFromComponents,
+  packSavings,
+  packSavingsLabel,
+  annotateGalleryPacks,
+  featureGalleryPacks,
+  GALLERY_PACKS_SECTION_NAME,
+} from "../src/packs.js";
 import { allocateMerged } from "../src/cart.js";
 import { applyOrderTax } from "../src/tax.js";
 import { findJsonLdProduct } from "../src/jsonld.js";
@@ -62,4 +71,141 @@ test("JSON-LD still describes the single kit, not the pack", () => {
     { name: "X-Frame Gallery Pack", categoryNames: ["X-Frame"] },
   ];
   assert.equal(findJsonLdProduct(products, "X-Frame").name, "X-Frame Complete Kit");
+});
+
+
+const PACK_DESCRIPTION =
+  "Five X-Frame Complete Kits in one pack, for a gallery wall. Each kit is a frame backing and wall mount. 4x6 5-Pack: five 4x6 Drop In kits. 5x7 5-Pack: five 5x7 Drop In kits. 8x10 5-Pack: five 8x10 Drop In kits. Peel and Stick 5-Pack: five Peel and Stick kits for frames you already own. Mixed Gallery Wall 5-Pack: two 4x6, two 5x7 and one 8x10 Drop In kit.";
+
+const PACK_NAMES = [
+  "4x6 5-Pack",
+  "5x7 5-Pack",
+  "8x10 5-Pack",
+  "Peel and Stick 5-Pack",
+  "Mixed Gallery Wall 5-Pack",
+];
+
+const K_PEEL = "ZIUUGDSMGYXIWDTEPQQ7CBQ6";
+
+function shopProducts() {
+  const kits = {
+    id: "KIT",
+    name: "X-Frame Complete Kit",
+    categoryNames: ["X-Frame"],
+    variations: [
+      { id: K46, name: "4x6 Drop In Complete Kit", amount: 2200, currency: "USD", priceLabel: "$22.00" },
+      { id: K57, name: "5x7 Drop In Complete Kit", amount: 2600, currency: "USD", priceLabel: "$26.00" },
+      { id: K810, name: "8x10 Drop In Complete Kit", amount: 3200, currency: "USD", priceLabel: "$32.00" },
+      { id: K_PEEL, name: "Peel and Stick Complete Kit (Existing Frames)", amount: 2700, currency: "USD", priceLabel: "$27.00" },
+    ],
+  };
+  const packs = {
+    id: "UNFNDN4ZTUNZYOGAG7DJDN44",
+    name: "X-Frame Gallery Pack",
+    description: PACK_DESCRIPTION,
+    categoryNames: ["X-Frame"],
+    imageUrl: "https://example.com/item.jpg",
+    variations: [
+      { id: "P46", name: "4x6 5-Pack", amount: 9500, currency: "USD", priceLabel: "$95.00", imageUrl: "https://example.com/4x6.jpg" },
+      { id: "P57", name: "5x7 5-Pack", amount: 11000, currency: "USD", priceLabel: "$110.00", imageUrl: "https://example.com/5x7.jpg" },
+      { id: "P810", name: "8x10 5-Pack", amount: 13500, currency: "USD", priceLabel: "$135.00", imageUrl: null },
+      { id: "PPS", name: "Peel and Stick 5-Pack", amount: 11500, currency: "USD", priceLabel: "$115.00", imageUrl: "https://example.com/peel.jpg" },
+      { id: "PMIX", name: "Mixed Gallery Wall 5-Pack", amount: 10900, currency: "USD", priceLabel: "$109.00", imageUrl: null },
+    ],
+  };
+  const canyon = { id: "W", name: "Wind River Canyon (large)", categoryNames: ["Wind River Canyon Models"], variations: [{ id: "W1", name: "Dark Mode", amount: 20000 }] };
+  return [kits, packs, canyon];
+}
+
+const SKUS = {
+  P46: "XF0046-5PK",
+  P57: "XF0057-5PK",
+  P810: "XF0810-5PK",
+  PPS: "XF00PS-5PK",
+  PMIX: "XFMIX-5PK",
+};
+
+test("pack contents are taken from the Square item description, never invented", () => {
+  const byName = packContentsByVariation(PACK_DESCRIPTION, PACK_NAMES);
+  assert.equal(byName["4x6 5-Pack"], "Five 4x6 Drop In kits.");
+  assert.equal(byName["5x7 5-Pack"], "Five 5x7 Drop In kits.");
+  assert.equal(byName["8x10 5-Pack"], "Five 8x10 Drop In kits.");
+  assert.equal(byName["Peel and Stick 5-Pack"], "Five Peel and Stick kits for frames you already own.");
+  assert.equal(byName["Mixed Gallery Wall 5-Pack"], "Two 4x6, two 5x7 and one 8x10 Drop In kit.");
+  assert.deepEqual(packContentsByVariation("", PACK_NAMES), {});
+  assert.deepEqual(packContentsByVariation("A pack of kits.", PACK_NAMES), {});
+  assert.equal(
+    packIntroFromDescription(PACK_DESCRIPTION, PACK_NAMES),
+    "Five X-Frame Complete Kits in one pack, for a gallery wall. Each kit is a frame backing and wall mount."
+  );
+});
+
+test("pack savings use single-kit Square prices and are omitted when unverified", () => {
+  const prices = { [K46]: 2200, [K57]: 2600, [K810]: 3200, [K_PEEL]: 2700 };
+  const five46 = packSavings(9500, { [K46]: 5 }, prices);
+  assert.deepEqual(five46, { singlesTotalCents: 11000, savingsCents: 1500, kitCount: 5, savingsPerKitCents: 300 });
+  assert.equal(packSavingsLabel(five46), "Save $15.00 ($3.00 per kit) versus buying the kits separately");
+
+  const mixed = packSavings(10900, { [K46]: 2, [K57]: 2, [K810]: 1 }, prices);
+  assert.equal(mixed.singlesTotalCents, 12800);
+  assert.equal(mixed.savingsCents, 1900);
+  assert.equal(mixed.savingsPerKitCents, 380);
+
+  assert.equal(packSavings(9500, { [K46]: 5 }, {}), null);
+  assert.equal(packSavings(11000, { [K46]: 5 }, prices), null);
+  assert.equal(
+    contentsFromComponents({ [K46]: 2, [K57]: 2, [K810]: 1 }, {
+      [K46]: "4x6 Drop In Complete Kit",
+      [K57]: "5x7 Drop In Complete Kit",
+      [K810]: "8x10 Drop In Complete Kit",
+    }),
+    "2 × 4x6 Drop In Complete Kit, 2 × 5x7 Drop In Complete Kit, and 1 × 8x10 Drop In Complete Kit."
+  );
+});
+
+test("featureGalleryPacks lifts pack variations into a section after X-Frames", () => {
+  const products = shopProducts();
+  annotateGalleryPacks(products, SKUS);
+  const packItem = products.find((p) => p.id === "UNFNDN4ZTUNZYOGAG7DJDN44");
+  assert.equal(packItem.variations.every((v) => v.isPack), true);
+  assert.equal(packItem.variations[0].contents, "Five 4x6 Drop In kits.");
+  assert.equal(packItem.variations[0].savingsCents, 1500);
+  assert.equal(packItem.variations[4].savingsCents, 1900);
+  assert.equal(packItem.variations[2].savingsCents, 2500);
+
+  const sections = [
+    { name: "X-Frames", products: [products[0], products[1]] },
+    { name: "Wind River Canyon Models", products: [products[2]] },
+  ];
+  const featured = featureGalleryPacks(sections, products);
+  assert.deepEqual(
+    featured.map((s) => [s.name, s.products.map((p) => p.name)]),
+    [
+      ["X-Frames", ["X-Frame Complete Kit"]],
+      [
+        GALLERY_PACKS_SECTION_NAME,
+        [
+          "4x6 5-Pack",
+          "5x7 5-Pack",
+          "8x10 5-Pack",
+          "Peel and Stick 5-Pack",
+          "Mixed Gallery Wall 5-Pack",
+        ],
+      ],
+      ["Wind River Canyon Models", ["Wind River Canyon (large)"]],
+    ]
+  );
+  const packSection = featured[1];
+  assert.match(packSection.intro, /Five X-Frame Complete Kits in one pack/);
+  assert.equal(packSection.intro.includes("10%"), false);
+  assert.equal(packSection.intro.includes("20%"), false);
+  const mix = packSection.products[4];
+  assert.equal(mix.isPack, true);
+  assert.equal(mix.defaultVariationId, "PMIX");
+  assert.equal(mix.variations.length, 1);
+  assert.equal(mix.amount, 10900);
+  assert.equal(mix.contents, "Two 4x6, two 5x7 and one 8x10 Drop In kit.");
+  assert.equal(mix.savingsLabel, "Save $19.00 ($3.80 per kit) versus buying the kits separately");
+  assert.equal(mix.imageUrl, "https://example.com/item.jpg");
+  assert.equal(packSection.products[0].imageUrl, "https://example.com/4x6.jpg");
 });
