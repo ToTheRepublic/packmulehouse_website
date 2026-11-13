@@ -13,11 +13,15 @@ const policyHtml = fs.readFileSync(policyPath, "utf8");
 const KEY_SENTENCES = [
   "One-Click PDF: Privacy Policy",
   "One-Click PDF does not collect, store, or transmit your browsing data or the pages you save.",
+  "If you enter a gift code, only that code (and a random ID) is sent to our server to check it.",
   "We do <b>not</b> collect, record, or transmit the web pages you visit or save",
   "We do <b>not</b> use analytics, tracking pixels, advertising identifiers, or cookies in the extension.",
   "We do <b>not</b> sell, rent, or share any personal data.",
+  "<h2>Gift codes</h2>",
+  "If you enter a Pro gift code, the extension sends that code, together with a random ID it generates once for your browser profile, to Pack Mule House's own server",
+  "Nothing else is sent: no email address, no browsing data, no page content.",
   "The extension is not directed to children under 13 and does not knowingly collect information from them.",
-  "Effective November 11, 2026",
+  "Effective November 12, 2026",
 ];
 
 /** Assets binding that reads from public/, with html_handling: none. */
@@ -86,6 +90,8 @@ test("GET /one-click-pdf/privacy/ also returns 200 with the same policy text", a
   assert.match(res.headers.get("content-type") || "", /^text\/html\b/i);
   const body = await res.text();
   assert.match(body, /One-Click PDF does not collect, store, or transmit your browsing data or the pages you save\./);
+  assert.match(body, /<h2>Gift codes<\/h2>/);
+  assert.match(body, /Effective November 12, 2026/);
 });
 
 test("one-click-pdf privacy is not in the sitemap, nav, or footer", () => {
